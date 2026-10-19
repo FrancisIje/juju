@@ -34,6 +34,7 @@
 }
 * { box-sizing: border-box; }
 body {
+  margin: 0; /* browsers add 8px by default; the artifact viewer already removes it */
   background: var(--bg); color: var(--fg);
   font: 16px/1.6 var(--f-body);
   padding-left: max(16px, env(safe-area-inset-left, 0px));

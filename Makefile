@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb dev test test-integration lint fmt fuzz
+.PHONY: help db devdb dev test test-integration lint fmt fuzz docs
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -34,3 +34,6 @@ fmt: ## Format all Go code
 
 fuzz: ## Fuzz the event parser for 30s
 	cd server && go test ./internal/event -run='^$$' -fuzz=FuzzNormalize -fuzztime=30s
+
+docs: ## Rebuild docs/index.html (GitHub Pages) from docs/_src/roadmap.html
+	./scripts/build-docs.sh

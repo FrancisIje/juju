@@ -1,7 +1,7 @@
 # juju
 
 Error tracking and product analytics for Flutter, React Native and web apps, with a Go backend.
-See the roadmap in [docs/roadmap.html](docs/roadmap.html).
+Roadmap: https://francisije.github.io/juju/ (source: [docs/_src/roadmap.html](docs/_src/roadmap.html); run `make docs` after editing it).
 
 ## Run it locally
 
