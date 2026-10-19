@@ -30,7 +30,10 @@ if (!dsn) {
     release: "example@0.1.0",
     environment: "development",
     debug: true,
-    flushIntervalMs: 1000, // short, so you see results quickly; the default is 5 s
+    // Short, so you see results quickly (the default is 5 s). ?flush=60000
+    // makes normal sends wait a minute, which proves that anything arriving
+    // sooner after the page closes came by sendBeacon.
+    flushIntervalMs: Number(params.get("flush")) || 1000,
   });
   juju.setUser({ id: "example-user" });
   log(`juju initialised for ${dsn.replace(/\/\/[^@]+@/, "//pk_…@")}`);
@@ -82,7 +85,12 @@ window.onerror = (message) => {
 
 // #selftest runs every scenario on load, for automated checks with a
 // headless browser. Clicking the buttons does the same thing by hand.
-if (location.hash === "#selftest" && dsn) {
+// #selftest-leave does the same, then leaves the page after 1.5 s, which
+// fires pagehide/visibilitychange exactly like closing the tab.
+// Read the mode once: the "navigate" step below calls pushState, which drops
+// the #hash from the URL.
+const selftest = location.hash;
+if (selftest.startsWith("#selftest") && dsn) {
   (async () => {
     document.getElementById("navigate").click();
     await actions["failed-fetch"]();
@@ -90,5 +98,11 @@ if (location.hash === "#selftest" && dsn) {
     document.getElementById("throw-rejection").click();
     document.getElementById("throw-uncaught").click();
     log("selftest: all scenarios triggered");
+    if (selftest === "#selftest-leave") {
+      setTimeout(() => {
+        log("leaving the page; queued events should go by sendBeacon");
+        location.href = "about:blank";
+      }, 1500);
+    }
   })();
 }
