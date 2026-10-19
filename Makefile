@@ -35,5 +35,5 @@ fmt: ## Format all Go code
 fuzz: ## Fuzz the event parser for 30s
 	cd server && go test ./internal/event -run='^$$' -fuzz=FuzzNormalize -fuzztime=30s
 
-docs: ## Rebuild docs/index.html (GitHub Pages) from docs/_src/roadmap.html
+docs: ## Rebuild the GitHub Pages files in docs/ from docs/_src/
 	./scripts/build-docs.sh
