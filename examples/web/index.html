@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>juju web example</title>
+<style>
+  :root { --bg: #f4f6f8; --fg: #141a22; --muted: #56606e; --line: #d9dee5; --accent: #b45309; --surface: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f1318; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e; --accent: #f59e0b; --surface: #161c23; color-scheme: dark; } }
+  body { margin: 0; padding: 32px 16px; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; display: grid; gap: 20px; }
+  h1 { margin: 0; font-size: 1.6rem; }
+  p { margin: 0; color: var(--muted); }
+  label { font-weight: 600; display: grid; gap: 6px; }
+  input { font: 0.9rem ui-monospace, Menlo, monospace; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  #log { font: 0.8rem ui-monospace, Menlo, monospace; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-height: 120px; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>juju web example</h1>
+  <p>Each button causes a different kind of error. Open the issues API (or later, the dashboard) to see them arrive, grouped, with breadcrumbs.</p>
+
+  <label for="dsn">DSN
+    <input id="dsn" type="text" spellcheck="false" placeholder="http://pk_...@localhost:8080/1">
+  </label>
+  <div class="buttons">
+    <button id="save-dsn">Save DSN and reload</button>
+  </div>
+
+  <div class="buttons">
+    <button id="throw-uncaught">Uncaught TypeError</button>
+    <button id="throw-rejection">Unhandled promise rejection</button>
+    <button id="throw-captured">Handled error (captureException)</button>
+    <button id="failed-fetch">Failed fetch (breadcrumb only)</button>
+    <button id="navigate">Navigate to /cart (breadcrumb only)</button>
+    <button id="flush">Send now</button>
+  </div>
+
+  <div id="log" aria-live="polite"></div>
+</main>
+
+<!-- The built SDK: `npm run build` in sdks/ creates this file. It defines a global `juju`. -->
+<script src="../../sdks/web/dist/juju.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

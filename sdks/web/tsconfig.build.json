@@ -1,0 +1,7 @@
+{
+  // Resolves @juju/core through node_modules, so build core first
+  // (npm run build at the sdks/ root does that).
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "declaration": true, "emitDeclarationOnly": true, "outDir": "dist", "rootDir": "src" },
+  "include": ["src"]
+}

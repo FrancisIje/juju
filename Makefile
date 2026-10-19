@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb dev test test-integration lint fmt fuzz docs
+.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -37,3 +37,12 @@ fuzz: ## Fuzz the event parser for 30s
 
 docs: ## Rebuild the GitHub Pages files in docs/ from docs/_src/
 	./scripts/build-docs.sh
+
+sdk: ## Install, type-check, test and build the JavaScript SDKs
+	cd sdks && npm install && npm run check
+
+sdk-test: ## Run the JavaScript SDK tests
+	cd sdks && npm test
+
+example-web: ## Serve the web example at http://localhost:5173/examples/web/ (run `make sdk` first)
+	python3 -m http.server 5173 --bind 127.0.0.1

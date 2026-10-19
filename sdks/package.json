@@ -1,0 +1,21 @@
+{
+  "name": "juju-sdks",
+  "private": true,
+  "description": "juju JavaScript SDKs. One npm install links the packages together.",
+  "workspaces": [
+    "js-core",
+    "web"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "build": "npm run build -w @juju/core && npm run build -w @juju/web",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "happy-dom": "15.11.7",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  }
+}

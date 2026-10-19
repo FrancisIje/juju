@@ -41,6 +41,7 @@ func Routes(pool *pgxpool.Pool, st *store.Store, q queue.Queue, log *slog.Logger
 		w.Write([]byte("ready\n"))
 	})
 
+	mux.HandleFunc("OPTIONS /api/v1/projects/{id}/events", ingest.Preflight)
 	mux.Handle("POST /api/v1/projects/{id}/events", &ingest.Handler{
 		Keys: st, Queue: q, Log: log, Now: time.Now,
 	})

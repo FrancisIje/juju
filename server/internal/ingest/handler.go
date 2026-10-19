@@ -57,6 +57,8 @@ type Response struct {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	allowCORS(w)
+
 	// Layer 1: the HTTP request itself. Cheapest checks first, so bad
 	// requests cost us almost nothing.
 	projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -68,7 +70,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, status, msg)
 		return
 	}
-	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+	// text/plain is accepted for sendBeacon: a beacon with a JSON content
+	// type needs a CORS preflight, which beacons can't do, so browsers refuse
+	// to send it. The body must still be valid JSON either way.
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" && mt != "text/plain" {
 		httpx.WriteError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
 		return
 	}
@@ -124,6 +129,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // events to this project.
 func (h *Handler) authenticate(r *http.Request, projectID int64) (int, string) {
 	got := r.Header.Get("X-Juju-Key")
+	if got == "" {
+		// sendBeacon can't set headers, so browsers send the key in the URL.
+		// That's fine for the public key: it is already visible in every app.
+		got = r.URL.Query().Get("juju_key")
+	}
 	if got == "" {
 		return http.StatusUnauthorized, "missing X-Juju-Key header"
 	}

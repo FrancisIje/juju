@@ -70,9 +70,9 @@ go test -race -count=1 ./...    # -race catches data races in concurrent ingest 
 go test -race -tags=integration ./...   # only when the docker compose stack is up
 command -v golangci-lint >/dev/null && golangci-lint run
 
-# Web / React Native
-cd sdks/web && npx vitest run && npx tsc --noEmit
-cd sdks/react-native && npx jest && npx tsc --noEmit
+# JavaScript SDKs (npm workspace in sdks/: js-core, web, later react-native)
+cd sdks && npm install && npm run check   # typecheck + vitest + build
+# vitest runs without type checking, so `npm run check` (which runs tsc) is required, not just `npm test`
 
 # Flutter
 cd sdks/flutter && dart format --set-exit-if-changed . && flutter analyze && flutter test
@@ -104,6 +104,10 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 
 ### SDK changes
 - Run the example app (`examples/web`, `examples/react_native`, `examples/flutter`) pointed at the local server.
+- Web: `make sdk` builds the bundle, `make example-web` serves it at http://127.0.0.1:5173/examples/web/. The page runs on a different origin from the server (port 5173 vs 8080), so CORS is exercised for real.
+- Web without clicking: open `index.html?dsn=<url-encoded DSN>#selftest` in headless Chrome (`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=9333 --enable-logging=stderr --user-data-dir=<scratch dir> <url>`). It triggers every scenario on load, and `[juju]` debug lines show up in Chrome's stderr. Use `--virtual-time-budget=5000 --screenshot=<file>` instead to capture the page's own log.
+- Offline → online: start the page while the juju server is **stopped** (the debug log shows growing backoff delays), then start the server. Each error must arrive exactly once: check `event_count` per issue and the row count in `events`.
+- Simulated-browser (happy-dom) tests can't prove everything. For example, it doesn't call `window.onerror` for dispatched events, so check that case in real Chrome.
 - Tap or click the "Throw error" / "Unhandled promise" / "Native crash" buttons.
 - Open the dashboard or the API and check that the issue appears with the correct **stack frames** (file, line, function), **release**, **environment**, **device/os context**, and **breadcrumbs** leading up to the error.
 - Go offline, throw, then come back online. The event should arrive once, not zero times and not twice.

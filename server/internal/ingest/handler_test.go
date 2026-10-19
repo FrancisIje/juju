@@ -107,7 +107,10 @@ func TestIngest(t *testing.T) {
 		{name: "missing key", headers: map[string]string{"X-Juju-Key": ""}, body: []byte(envelope(goodEvent(id1))), wantStatus: 401},
 		{name: "wrong key", headers: map[string]string{"X-Juju-Key": "pk_wrong"}, body: []byte(envelope(goodEvent(id1))), wantStatus: 401},
 		{name: "unknown project looks like a wrong key", path: "/api/v1/projects/999/events", body: []byte(envelope(goodEvent(id1))), wantStatus: 401, wantBody: "invalid project key"},
-		{name: "wrong content type", headers: map[string]string{"Content-Type": "text/plain"}, body: []byte(envelope(goodEvent(id1))), wantStatus: 415},
+		{name: "wrong content type", headers: map[string]string{"Content-Type": "application/xml"}, body: []byte(envelope(goodEvent(id1))), wantStatus: 415},
+		{name: "text/plain is accepted (sendBeacon)", headers: map[string]string{"Content-Type": "text/plain;charset=UTF-8"}, body: []byte(envelope(goodEvent(id1))), wantStatus: 202, wantQueued: 1},
+		{name: "key in query string (sendBeacon)", path: "/api/v1/projects/1/events?juju_key=" + key, headers: map[string]string{"X-Juju-Key": ""}, body: []byte(envelope(goodEvent(id1))), wantStatus: 202, wantQueued: 1},
+		{name: "wrong key in query string", path: "/api/v1/projects/1/events?juju_key=pk_wrong", headers: map[string]string{"X-Juju-Key": ""}, body: []byte(envelope(goodEvent(id1))), wantStatus: 401},
 		{name: "unsupported encoding", headers: map[string]string{"Content-Encoding": "br"}, body: []byte(envelope(goodEvent(id1))), wantStatus: 415},
 		{name: "body over 1 MB", body: []byte(big), wantStatus: 413},
 		{name: "gzip bomb over 1 MB decompressed", headers: map[string]string{"Content-Encoding": "gzip"}, body: bomb, wantStatus: 413},
@@ -205,5 +208,39 @@ func TestGzipBombIsNotInflated(t *testing.T) {
 	}
 	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 16<<20 {
 		t.Fatalf("allocated %d MB for a %d KB request: the body is being inflated past the limit", allocated>>20, len(bomb)>>10)
+	}
+}
+
+// Without these headers the browser hides the response from the SDK, even
+// though the server processed the request. That includes error responses:
+// the SDK must be able to see a 401 or 429 to react to it.
+func TestCORSHeadersOnEveryResponse(t *testing.T) {
+	for _, k := range []string{key, "pk_wrong"} {
+		req := httptest.NewRequest("POST", "/api/v1/projects/1/events", strings.NewReader(envelope(goodEvent(id1))))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Juju-Key", k)
+		rec := httptest.NewRecorder()
+		newMux(&fakeQueue{room: 10}).ServeHTTP(rec, req)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Errorf("status %d: Access-Control-Allow-Origin = %q, want *", rec.Code, got)
+		}
+		if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "Retry-After") {
+			t.Errorf("status %d: Retry-After not exposed to scripts", rec.Code)
+		}
+	}
+}
+
+func TestPreflight(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Preflight(rec, httptest.NewRequest("OPTIONS", "/api/v1/projects/1/events", nil))
+	h := rec.Header()
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", rec.Code)
+	}
+	if !strings.Contains(h.Get("Access-Control-Allow-Headers"), "X-Juju-Key") {
+		t.Errorf("Allow-Headers = %q: the browser would refuse to send X-Juju-Key", h.Get("Access-Control-Allow-Headers"))
+	}
+	if h.Get("Access-Control-Allow-Methods") != "POST" || h.Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("headers = %v", h)
 	}
 }

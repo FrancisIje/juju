@@ -1,0 +1,18 @@
+{
+  "name": "@juju/web",
+  "version": "0.1.0",
+  "description": "juju error tracking for the browser.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@juju/core": "0.1.0"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --target=es2020 --external:@juju/core --outfile=dist/index.js && esbuild src/index.ts --bundle --format=iife --global-name=juju --target=es2020 --minify --outfile=dist/juju.min.js && tsc -p tsconfig.build.json"
+  }
+}

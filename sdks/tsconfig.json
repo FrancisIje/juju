@@ -1,0 +1,11 @@
+{
+  // Type-checks both packages and their tests from source in one pass.
+  // "paths" points @juju/core at its source so you don't have to build it first.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["vitest/globals"],
+    "paths": { "@juju/core": ["./js-core/src/index.ts"] }
+  },
+  "include": ["js-core/src", "js-core/test", "web/src", "web/test"]
+}

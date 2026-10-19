@@ -24,9 +24,25 @@ curl -X POST localhost:8080/api/v1/projects/1/events \
 curl localhost:8080/api/v1/projects/1/issues -H "Authorization: Bearer <secret_key>"
 ```
 
+## Web SDK
+
+```bash
+make sdk            # install, type-check, test and build sdks/js-core and sdks/web
+make example-web    # serve the example app at http://127.0.0.1:5173/examples/web/
+```
+
+Paste a DSN into the example page (`http://<public_key>@localhost:8080/<project id>`) and click the buttons.
+In an app:
+
+```js
+import * as juju from "@juju/web";
+juju.init({ dsn: "https://pk_...@juju.example.com/1", release: "web@2.3.1", environment: "production" });
+```
+
 ## Tests
 
 ```bash
+make sdk-test          # JavaScript SDK tests
 make test              # gofmt, go vet, unit tests with -race
 make test-integration  # also runs against a real (embedded) Postgres
 make fuzz              # fuzz the event parser for 30s
@@ -48,4 +64,8 @@ server/
   internal/store/      all SQL
   internal/api/        read endpoints (secret key)
   internal/db/         connection pool + embedded migrations
+sdks/
+  js-core/             @juju/core: events, stack parsing, queue, batching, retry
+  web/                 @juju/web: browser error hooks, breadcrumbs, sendBeacon
+examples/web/          example app that triggers each kind of error
 ```
