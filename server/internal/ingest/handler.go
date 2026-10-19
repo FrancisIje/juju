@@ -82,6 +82,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, status, err.Error())
 		return
 	}
+	// Debug level only: one line per request would be noisy in production,
+	// but it's how you check what an SDK actually sends.
+	h.Log.Debug("envelope received",
+		"project_id", projectID,
+		"content_type", r.Header.Get("Content-Type"),
+		"content_encoding", r.Header.Get("Content-Encoding"),
+		"wire_bytes", r.ContentLength,
+		"json_bytes", len(body),
+	)
 
 	// Layers 2 and 3: valid JSON, and a sane envelope.
 	env, err := event.ParseEnvelope(body)

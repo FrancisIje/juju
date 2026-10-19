@@ -1,7 +1,7 @@
 import { Breadcrumbs } from "./breadcrumbs";
 import { parseDsn, type Dsn } from "./dsn";
 import { defaultIsInApp, exceptionFromThrown, type InAppFn } from "./stacktrace";
-import { fetchTransport, type SendResult, type Transport } from "./transport";
+import { byteLength, fetchTransport, type SendResult, type Transport } from "./transport";
 import type { Breadcrumb, Envelope, JujuEvent, SdkInfo, User } from "./types";
 import { uuid4 } from "./uuid";
 
@@ -144,8 +144,9 @@ export class Client {
       let body = "";
       for (const e of this.queue) {
         const next = JSON.stringify(this.envelope([...batch, e]));
-        if (next.length > maxBytes && batch.length > 0) break;
-        if (next.length > maxBytes) {
+        const bytes = byteLength(next); // bytes, not string.length: the beacon limit is in bytes
+        if (bytes > maxBytes && batch.length > 0) break;
+        if (bytes > maxBytes) {
           // A single event too big for a beacon: leave it for a normal send.
           this.log("event too large for sendBeacon, keeping it for the next send");
           return;

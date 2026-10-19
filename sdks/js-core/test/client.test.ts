@@ -250,6 +250,14 @@ describe("drain (sendBeacon)", () => {
     expect(sizes.length).toBeGreaterThan(1);
   });
 
+  it("measures the beacon limit in bytes, not characters", () => {
+    const c = client(fakeTransport().transport);
+    c.captureException("é".repeat(600)); // 600 characters, 1,200 bytes
+    const send = vi.fn(() => true);
+    c.drain(send, 1_000);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("keeps an event too big for a beacon for the next normal send", () => {
     const c = client(fakeTransport().transport);
     c.captureException("x".repeat(2_000));

@@ -6,6 +6,17 @@ export { Client, VERSION, type ClientOptions } from "./client";
 export { Breadcrumbs } from "./breadcrumbs";
 export { parseDsn, DsnError, type Dsn } from "./dsn";
 export { parseStack, exceptionFromThrown, defaultIsInApp, type InAppFn } from "./stacktrace";
-export { fetchTransport, classify, parseRetryAfter, KEEPALIVE_LIMIT, type Transport, type SendResult } from "./transport";
+export {
+  fetchTransport,
+  classify,
+  parseRetryAfter,
+  gzip,
+  byteLength,
+  KEEPALIVE_LIMIT,
+  COMPRESS_MIN_BYTES,
+  type Transport,
+  type SendResult,
+  type FetchTransportOptions,
+} from "./transport";
 export { uuid4 } from "./uuid";
 export type { Breadcrumb, Envelope, ExceptionData, Frame, JujuEvent, SdkInfo, User } from "./types";
