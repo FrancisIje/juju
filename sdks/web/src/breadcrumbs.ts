@@ -1,4 +1,8 @@
-import type { Client } from "@juju/core";
+import { redact, toText, type Client } from "@juju/core";
+
+// Console and XHR wrappers are shared with React Native, so they live in
+// @juju/core (instrument.ts). This file has the browser-only sources.
+export { instrumentConsole, instrumentXHR, redact } from "@juju/core";
 
 // Breadcrumbs record what led up to an error. Each source below wraps a
 // browser API, records a short note, then calls the original so the app
@@ -10,24 +14,6 @@ import type { Client } from "@juju/core";
 // those can contain passwords, tokens and personal data.
 
 type Uninstall = () => void;
-
-const CONSOLE_LEVELS = ["debug", "info", "log", "warn", "error"] as const;
-
-export function instrumentConsole(client: Client): Uninstall {
-  const originals = new Map<string, (...args: unknown[]) => void>();
-  for (const level of CONSOLE_LEVELS) {
-    const original = console[level];
-    if (typeof original !== "function") continue;
-    originals.set(level, original);
-    console[level] = function (this: Console, ...args: unknown[]) {
-      client.addBreadcrumb({ type: "console", message: args.map(toText).join(" ").slice(0, 1000), data: { level } });
-      return original.apply(this, args);
-    };
-  }
-  return () => {
-    for (const [level, original] of originals) (console as unknown as Record<string, unknown>)[level] = original;
-  };
-}
 
 export function instrumentFetch(client: Client, isJujuUrl: (url: string) => boolean): Uninstall {
   const original = window.fetch;
@@ -52,35 +38,6 @@ export function instrumentFetch(client: Client, isJujuUrl: (url: string) => bool
   } as typeof fetch;
   return () => {
     window.fetch = original;
-  };
-}
-
-export function instrumentXHR(client: Client, isJujuUrl: (url: string) => boolean): Uninstall {
-  if (typeof XMLHttpRequest === "undefined") return () => {};
-  const proto = XMLHttpRequest.prototype;
-  const originalOpen = proto.open;
-  const originalSend = proto.send;
-  const info = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
-
-  proto.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
-    info.set(this, { method: method.toUpperCase(), url: String(url) });
-    return (originalOpen as (...a: unknown[]) => void).call(this, method, url, ...rest);
-  } as typeof proto.open;
-
-  proto.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
-    const req = info.get(this);
-    if (req && !isJujuUrl(req.url)) {
-      this.addEventListener("loadend", () => {
-        const status = this.status || "failed";
-        client.addBreadcrumb({ type: "xhr", message: `${req.method} ${redact(req.url)} → ${status}`, data: { method: req.method, url: redact(req.url), status } });
-      });
-    }
-    return originalSend.call(this, body);
-  };
-
-  return () => {
-    proto.open = originalOpen;
-    proto.send = originalSend;
   };
 }
 
@@ -133,24 +90,8 @@ export function describeElement(el: Element): string {
   return s;
 }
 
-/** Drops the query string and fragment, which often carry tokens. */
-export function redact(url: string): string {
-  const cut = url.search(/[?#]/);
-  return cut >= 0 ? url.slice(0, cut) : url;
-}
-
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.href;
   return input.url;
-}
-
-function toText(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (v instanceof Error) return `${v.name}: ${v.message}`;
-  try {
-    return JSON.stringify(v) ?? String(v);
-  } catch {
-    return String(v);
-  }
 }

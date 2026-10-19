@@ -45,6 +45,25 @@ describe("parseStack", () => {
   });
 });
 
+describe("Hermes (React Native) traces", () => {
+  it("parses release frames, which say 'address at'", () => {
+    const hermes = `TypeError: Cannot read property 'amount' of undefined
+    at checkout (address at index.android.bundle:1:234567)
+    at onPress (address at index.android.bundle:1:234890)
+    at anonymous (native)`;
+    expect(parseStack(hermes)).toEqual([
+      { function: "checkout", filename: "index.android.bundle", lineno: 1, colno: 234567, in_app: true },
+      { function: "onPress", filename: "index.android.bundle", lineno: 1, colno: 234890, in_app: true },
+      { function: "anonymous", filename: "native", in_app: false },
+    ]);
+  });
+
+  it("parses debug frames served by Metro", () => {
+    const [f] = parseStack("    at checkout (http://10.0.2.2:8081/index.bundle//&platform=android&dev=true:123:45)");
+    expect(f).toMatchObject({ function: "checkout", filename: "http://10.0.2.2:8081/index.bundle//&platform=android&dev=true", lineno: 123, colno: 45 });
+  });
+});
+
 describe("exceptionFromThrown", () => {
   it("uses the error's name, message and stack", () => {
     class PaymentError extends Error {

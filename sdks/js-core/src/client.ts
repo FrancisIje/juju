@@ -30,6 +30,18 @@ export interface ClientOptions {
   logger?: Pick<Console, "warn">;
   /** Injectable for tests: returns a number in [0, 1). */
   random?: () => number;
+  /**
+   * Saves the queue so events survive the app being killed, and reloads
+   * them on the next start. Used by React Native, where a crash ends the
+   * process before a send can finish.
+   */
+  persistence?: QueueStorage;
+}
+
+/** Somewhere to keep queued events between app launches. */
+export interface QueueStorage {
+  load(): Promise<JujuEvent[]>;
+  save(events: JujuEvent[]): Promise<void>;
 }
 
 const BASE_BACKOFF_MS = 1_000;
@@ -55,6 +67,12 @@ export class Client {
   // captureException and then rethrows it to the global handler. A WeakSet
   // remembers objects without keeping them alive for the garbage collector.
   private seen = new WeakSet<object>();
+  // Saves run one after another, in order, so an older snapshot can never
+  // overwrite a newer one. saveQueued coalesces bursts into one write.
+  private persistChain: Promise<void> = Promise.resolve();
+  private saveQueued = false;
+  /** Resolves once events saved by the previous launch are back in the queue. */
+  readonly ready: Promise<void>;
 
   constructor(options: ClientOptions) {
     this.dsn = parseDsn(options.dsn); // throws early on a bad DSN: a config mistake should be loud
@@ -68,6 +86,12 @@ export class Client {
     this.transport = options.transport ?? fetchTransport(this.dsn);
     this.isInApp = options.isInApp ?? defaultIsInApp;
     this.breadcrumbs = new Breadcrumbs(options.maxBreadcrumbs ?? 100);
+
+    // Load before any save: an error captured in the first moments after
+    // launch would otherwise save a queue without the old events, wiping
+    // the crash report we're about to read back.
+    this.ready = this.loadSaved();
+    this.persistChain = this.ready;
   }
 
   /**
@@ -194,6 +218,7 @@ export class Client {
       return false;
     }
     this.queue.push(event);
+    void this.persist();
     this.schedule(this.queue.length >= this.opts.maxBatchSize ? 0 : this.opts.flushIntervalMs);
     return true;
   }
@@ -258,6 +283,55 @@ export class Client {
   private remove(batch: JujuEvent[]): void {
     const sent = new Set(batch);
     this.queue = this.queue.filter((e) => !sent.has(e));
+    void this.persist();
+  }
+
+  /**
+   * Writes the current queue to storage. Returns a promise for that write,
+   * so a fatal-crash handler can wait for it before the app dies.
+   */
+  persistNow(): Promise<void> {
+    return this.persist();
+  }
+
+  private persist(): Promise<void> {
+    const store = this.opts.persistence;
+    if (!store) return Promise.resolve();
+    if (this.saveQueued) return this.persistChain; // a write that will see this change is already waiting
+    this.saveQueued = true;
+    this.persistChain = this.persistChain.then(async () => {
+      this.saveQueued = false;
+      try {
+        await store.save(this.queue.slice()); // the queue as it is when the write starts: always the latest
+      } catch (err) {
+        this.log("could not save queued events", err);
+      }
+    });
+    return this.persistChain;
+  }
+
+  private async loadSaved(): Promise<void> {
+    const store = this.opts.persistence;
+    if (!store) return;
+    let saved: unknown;
+    try {
+      saved = await store.load();
+    } catch (err) {
+      this.log("could not load saved events", err);
+      return;
+    }
+    if (!Array.isArray(saved)) return;
+    // The same event can be both in memory and on disk (it was captured
+    // after launch and saved). event_id tells them apart.
+    const known = new Set(this.queue.map((e) => e.event_id));
+    const restored = saved.filter(
+      (e): e is JujuEvent => typeof e === "object" && e !== null && typeof (e as JujuEvent).event_id === "string" && !known.has((e as JujuEvent).event_id),
+    );
+    if (restored.length === 0) return;
+    // Older events first, and never more than the queue allows.
+    this.queue = [...restored, ...this.queue].slice(0, this.opts.maxQueueSize);
+    this.log(`restored ${restored.length} event(s) saved by a previous launch`);
+    this.schedule(0);
   }
 
   private envelope(events: JujuEvent[]): Envelope {

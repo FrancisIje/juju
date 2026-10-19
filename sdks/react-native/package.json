@@ -1,0 +1,26 @@
+{
+  "name": "@juju/react-native",
+  "version": "0.1.0",
+  "description": "juju error tracking for React Native.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "react-native": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@juju/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "react-native": ">=0.74"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  }
+}

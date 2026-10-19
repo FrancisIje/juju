@@ -1,9 +1,10 @@
 import type { ExceptionData, Frame } from "./types";
 
-// Browsers print stack traces as plain text, in two dialects:
+// JavaScript engines print stack traces as plain text, in two dialects:
 //
 //   Chrome, Edge, Node (V8):     "    at render (https://shop.com/app.js:1:4821)"
 //                                "    at https://shop.com/app.js:1:4821"
+//   React Native (Hermes):       "    at render (address at index.android.bundle:1:4821)"
 //   Firefox, Safari:             "render@https://shop.com/app.js:1:4821"
 //
 // The server's fingerprinting needs structured frames, so we parse both.
@@ -59,6 +60,9 @@ function withFunction(fn: string): Pick<Frame, "function"> {
 }
 
 function parseLocation(loc: string): Pick<Frame, "filename" | "lineno" | "colno"> {
+  // Hermes (React Native's engine) writes release frames as
+  // "address at index.android.bundle:1:2345".
+  loc = loc.replace(/^address at /, "");
   const m = /^(.*?):(\d+)(?::(\d+))?$/.exec(loc);
   if (!m) return { filename: loc };
   const out: Pick<Frame, "filename" | "lineno" | "colno"> = { filename: m[1]!, lineno: Number(m[2]) };

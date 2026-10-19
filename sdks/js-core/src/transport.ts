@@ -48,7 +48,19 @@ export const COMPRESS_MIN_BYTES = 1024;
  * and an emoji is 2 units but 4 bytes. Browser limits are in bytes.
  */
 export function byteLength(s: string): number {
-  return new TextEncoder().encode(s).length;
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(s).length;
+  // Older React Native (Hermes) has no TextEncoder: count UTF-8 bytes by hand.
+  let bytes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      bytes += 4; // a surrogate pair (emoji etc.) is one 4-byte character
+      i++;
+    } else bytes += 3;
+  }
+  return bytes;
 }
 
 /**

@@ -39,6 +39,16 @@ import * as juju from "@juju/web";
 juju.init({ dsn: "https://pk_...@juju.example.com/1", release: "web@2.3.1", environment: "production" });
 ```
 
+## React Native SDK
+
+```js
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as juju from "@juju/react-native";
+juju.init({ dsn: "https://pk_...@juju.example.com/1", release: "shop@1.4.0+12", storage: AsyncStorage });
+```
+
+`storage` keeps unsent events on the device, so a crash is reported on the next launch. Example app: [examples/react-native](examples/react-native).
+
 ## Tests
 
 ```bash
@@ -67,5 +77,7 @@ server/
 sdks/
   js-core/             @juju/core: events, stack parsing, queue, batching, retry
   web/                 @juju/web: browser error hooks, breadcrumbs, sendBeacon
+  react-native/        @juju/react-native: crash handler, saved queue, device context
 examples/web/          example app that triggers each kind of error
+examples/react-native/ React Native app for iOS and Android release-build checks
 ```

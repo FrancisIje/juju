@@ -145,3 +145,17 @@ describe("gzip compression", () => {
     expect(lastInit(fetchMock).keepalive).toBe(true);
   });
 });
+
+describe("byteLength", () => {
+  it("counts UTF-8 bytes the same way with or without TextEncoder", () => {
+    const samples = ["", "hello", "é", "Ọ̀rọ̀ Yorùbá", "中文", "😀👍🏽", "mixed é 中 😀 text"];
+    const withEncoder = samples.map(byteLength);
+    vi.stubGlobal("TextEncoder", undefined); // older React Native
+    try {
+      expect(samples.map(byteLength)).toEqual(withEncoder);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(byteLength("😀")).toBe(4);
+  });
+});

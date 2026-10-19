@@ -67,7 +67,7 @@ export function init(options: WebOptions): void {
   uninstallers = [installErrorHandlers(c), installLifecycle(c)];
   if (crumbs.console) uninstallers.push(instrumentConsole(c));
   if (crumbs.fetch) uninstallers.push(instrumentFetch(c, isJujuUrl));
-  if (crumbs.xhr) uninstallers.push(instrumentXHR(c, isJujuUrl));
+  if (crumbs.xhr) uninstallers.push(instrumentXHR(c, isJujuUrl, typeof XMLHttpRequest === "undefined" ? undefined : XMLHttpRequest));
   if (crumbs.clicks) uninstallers.push(instrumentClicks(c));
   if (crumbs.navigation) uninstallers.push(instrumentHistory(c));
 }

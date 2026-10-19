@@ -103,7 +103,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <span class="eyebrow">Project plan · Go · started Oct 2026</span>
     <h1>juju roadmap</h1>
     <p class="lede">Error tracking (like Sentry) and product analytics (like PostHog) in one Go backend, with SDKs for Flutter, React Native and the web. This page sets the order to build it in and explains the reason behind each choice.</p>
-    <div class="logline">[2026-10-19T20:30:00Z] <b>INFO</b> phase=2 status=done msg="web SDK verified in Chrome: offline errors arrive exactly once; next: React Native"</div>
+    <div class="logline">[2026-10-19T22:30:00Z] <b>INFO</b> phase=3 status=done msg="release-build crashes survive app death on iOS and Android; next: Flutter"</div>
   </header>
 
   <section>
@@ -240,8 +240,8 @@ flowchart LR
         <div class="done"><span class="label">Done when</span>Clicking "throw" in the example app creates an issue with breadcrumbs, and an error thrown offline arrives exactly once after reconnecting.</div>
       </article>
 
-      <article class="phase next">
-        <div class="phase-head"><span class="phase-num">Phase 3</span><h3>React Native SDK</h3><span class="pill next">Next</span></div>
+      <article class="phase done-phase">
+        <div class="phase-head"><span class="phase-num">Phase 3</span><h3>React Native SDK</h3><span class="pill done">Done</span></div>
         <ul>
           <li><code>ErrorUtils.setGlobalHandler</code> that always calls the app's previous handler</li>
           <li>Promise rejection tracking, device and OS context, app version</li>
@@ -252,8 +252,8 @@ flowchart LR
         <div class="done"><span class="label">Done when</span>A JS crash in a <strong>release build</strong> shows up after the app is reopened.</div>
       </article>
 
-      <article class="phase">
-        <div class="phase-head"><span class="phase-num">Phase 4</span><h3>Flutter SDK</h3><span class="pill">Planned</span></div>
+      <article class="phase next">
+        <div class="phase-head"><span class="phase-num">Phase 4</span><h3>Flutter SDK</h3><span class="pill next">Next</span></div>
         <ul>
           <li>Hook all three error paths: <code>FlutterError.onError</code> for framework errors, <code>PlatformDispatcher.instance.onError</code> for async errors, and an optional <code>runZonedGuarded</code></li>
           <li>Parse Dart stack traces into frames, and mark frames from your own <code>package:</code> as <code>in_app</code></li>

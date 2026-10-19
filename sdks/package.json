@@ -4,12 +4,13 @@
   "description": "juju JavaScript SDKs. One npm install links the packages together.",
   "workspaces": [
     "js-core",
-    "web"
+    "web",
+    "react-native"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "build": "npm run build -w @juju/core && npm run build -w @juju/web",
+    "build": "npm run build -w @juju/core && npm run build -w @juju/web && npm run build -w @juju/react-native",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

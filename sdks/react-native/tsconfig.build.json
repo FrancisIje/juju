@@ -1,0 +1,8 @@
+{
+  // Plain tsc output, not an esbuild bundle: Metro (React Native's bundler)
+  // compiles it with the app and must see the real `import ... from
+  // "react-native"` lines to wire up the app's own copy of React Native.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "declaration": true, "outDir": "dist", "rootDir": "src" },
+  "include": ["src"]
+}

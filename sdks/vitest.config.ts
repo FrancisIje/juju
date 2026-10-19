@@ -5,7 +5,11 @@ export default defineConfig({
   resolve: {
     // Tests import @juju/core from source, so a change in core is tested
     // immediately without rebuilding it.
-    alias: { "@juju/core": fileURLToPath(new URL("./js-core/src/index.ts", import.meta.url)) },
+    alias: {
+      "@juju/core": fileURLToPath(new URL("./js-core/src/index.ts", import.meta.url)),
+      // React Native itself can't run in Node, so its tests get a small fake.
+      "react-native": fileURLToPath(new URL("./react-native/test/react-native-fake.ts", import.meta.url)),
+    },
   },
   test: {
     include: ["*/test/**/*.test.ts"],

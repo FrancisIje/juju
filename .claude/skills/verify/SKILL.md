@@ -21,7 +21,7 @@ The user is learning with this project. In every step, say **why** a test or che
 |---|---|---|
 | `server/**` | Go ingest / API / worker | `go test` |
 | `sdks/js-core/**`, `sdks/web/**` | Web SDK (TypeScript) | `vitest` |
-| `sdks/react-native/**` | React Native SDK | `jest` |
+| `sdks/react-native/**` | React Native SDK | `vitest` (with a fake `react-native` module) |
 | `sdks/flutter/**` | Flutter SDK (Dart) | `flutter test` |
 | `dashboard/**` | Dashboard UI | `vitest` + manual check in a browser |
 | `server/migrations/**` | Database schema | migrate up, then down, then up again |
@@ -47,7 +47,7 @@ Write the test that would have caught the bug, or that proves the feature works.
 ### TypeScript SDKs (web, React Native)
 - Test the transport with a fake `fetch`: batching, retry with backoff, dropping after N attempts, `sendBeacon` on page hide.
 - Test the error hooks: throw inside a `setTimeout` and reject a promise, then assert that exactly one event was queued with the right `exception.type` and frames.
-- React Native: mock `ErrorUtils.setGlobalHandler` and assert that the previous handler still gets called. Why: we must never swallow the app's own crash behaviour.
+- React Native: fake `ErrorUtils` and assert that the previous handler still gets called. Why: we must never swallow the app's own crash behaviour. For fatal errors, also assert it's called only after the queue is saved, and within the timeout if storage hangs.
 
 ### Dart (Flutter SDK)
 - `flutter test`: cover `FlutterError.onError`, `PlatformDispatcher.instance.onError`, and errors inside `runZonedGuarded`.
@@ -108,6 +108,12 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 - Web without clicking: open `index.html?dsn=<url-encoded DSN>#selftest` in headless Chrome (`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=9333 --enable-logging=stderr --user-data-dir=<scratch dir> <url>`). It triggers every scenario on load, and `[juju]` debug lines show up in Chrome's stderr. Use `--virtual-time-budget=5000 --screenshot=<file>` instead to capture the page's own log.
 - Offline → online: start the page while the juju server is **stopped** (the debug log shows growing backoff delays), then start the server. Each error must arrive exactly once: check `event_count` per issue and the row count in `events`.
 - Simulated-browser (happy-dom) tests can't prove everything. For example, it doesn't call `window.onerror` for dispatched events, so check that case in real Chrome.
+- React Native (`examples/react-native`, see its README):
+  - `make example-rn-deps` after any SDK change. The example installs the SDK from `npm pack` tarballs, so it tests what users get.
+  - Build **release** builds. iOS: `xcodebuild -workspace ios/JujuExample.xcworkspace -scheme JujuExample -configuration Release -sdk iphonesimulator -derivedDataPath ios/build`, then `xcrun simctl install`/`launch`. Android: `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ANDROID_HOME=~/Library/Android/sdk ./gradlew assembleRelease`, then boot `emulator -avd Pixel_10_Pro -no-window`, `adb reverse tcp:8080 tcp:8080` and `tcp:8098`, `adb install -r`.
+  - Gradle doesn't notice SDK changes inside `node_modules`: force the JS step with `./gradlew :app:createBundleReleaseJsAndAssets --rerun :app:assembleRelease`, and check the APK's timestamp. A "successful" build that didn't rebuild proves nothing.
+  - Drive scenarios with the control file (`config.json` on port 8098): `nonfatal`, then the **crash test**: stop the juju server, launch with `crash` (the process must die; iOS writes a `.ips` report in `~/Library/Logs/DiagnosticReports`, Android logs `FATAL EXCEPTION`), start the server, relaunch with `none`. The crash must arrive exactly once, with the same `event_id` that was saved.
+  - iOS lets you read the saved queue directly: `xcrun simctl get_app_container <sim> <bundle id> data`, then `Library/Application Support/<bundle id>/RCTAsyncLocalStorage_V1/manifest.json`, key `@juju/queue`. Android release builds aren't debuggable, so relaunching is the proof there.
 - Tap or click the "Throw error" / "Unhandled promise" / "Native crash" buttons.
 - Open the dashboard or the API and check that the issue appears with the correct **stack frames** (file, line, function), **release**, **environment**, **device/os context**, and **breadcrumbs** leading up to the error.
 - Go offline, throw, then come back online. The event should arrive once, not zero times and not twice.
