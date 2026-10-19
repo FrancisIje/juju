@@ -1,0 +1,337 @@
+<title>juju Roadmap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; phases read like a log stream, each with a level stripe, "why now", and a done-when check tied to /verify. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #b45309;      /* pager amber */
+  --accent-soft: #fdf1e3;
+  --ok: #15803d;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #f59e0b; --accent-soft: #2a1f0f; --ok: #4ade80; --info: #7aa2ff; --code-bg: #1d242d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #f59e0b; --accent-soft: #2a1f0f; --ok: #4ade80; --info: #7aa2ff; --code-bg: #1d242d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2.2rem, 6vw, 3.2rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.2rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header { display: grid; gap: 14px; }
+.logline {
+  font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted);
+  border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--surface);
+  overflow-x: auto; white-space: nowrap;
+}
+.logline b { color: var(--accent); font-weight: 600; }
+section { display: grid; gap: 18px; }
+
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
+
+.decisions { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.decision { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 8px 24px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.decision h3 { font-size: 1.02rem; }
+.decision p { color: var(--fg); }
+.decision .why { color: var(--muted); font-size: 0.95rem; margin-top: 4px; }
+@media (max-width: 640px) { .decision { grid-template-columns: minmax(0, 1fr); } }
+
+.phases { display: grid; gap: 16px; }
+.phase {
+  background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line);
+  border-radius: 6px; padding: 20px 22px; display: grid; gap: 12px; min-width: 0;
+}
+.phase.next { border-left-color: var(--accent); }
+.phase-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.phase-num { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill { font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.next { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.pill.done { color: var(--ok); border-color: var(--ok); }
+.phase.done-phase { border-left-color: var(--ok); }
+.phase ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.phase li { max-width: 68ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.whynow { border-left: 2px solid var(--info); padding-left: 12px; }
+.done { border-left: 2px solid var(--ok); padding-left: 12px; }
+details { border-top: 1px dashed var(--line); padding-top: 10px; }
+summary { cursor: pointer; color: var(--muted); font-size: 0.92rem; }
+summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.8rem; line-height: 1.55; margin: 0; }
+
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.step .mono { color: var(--accent); }
+footer { color: var(--muted); font-size: 0.9rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Project plan · Go · started Oct 2026</span>
+    <h1>juju roadmap</h1>
+    <p class="lede">Error tracking (like Sentry) and product analytics (like PostHog) in one Go backend, with SDKs for Flutter, React Native and the web. This page sets the order to build it in and explains the reason behind each choice.</p>
+    <div class="logline">[2026-10-19T17:45:00Z] <b>INFO</b> phase=1 status=done msg="ingest, grouping and issues API verified; next: web SDK"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">Architecture</span>
+    <h2>How the pieces fit</h2>
+    <p>An app with a juju SDK catches an error, packages it as a JSON <em>event</em> and sends it to the ingest endpoint. Ingest answers fast and hands the event to a worker. The worker groups it into an <em>issue</em>, turns minified stack traces back into readable ones, and stores it. The dashboard reads from storage.</p>
+    <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+  subgraph Apps
+    F[Flutter SDK]
+    R[React Native SDK]
+    W[Web SDK]
+  end
+  F & R & W -->|POST /api/v1/projects/:id/events| I[Ingest<br/>validate · auth · rate limit]
+  I -->|queue| K[Worker<br/>fingerprint · symbolicate · alert]
+  K --> P[(Postgres<br/>projects · issues · users)]
+  K -. phase 7 .-> C[(ClickHouse<br/>raw events · analytics)]
+  A[API] --> P
+  A -.-> C
+  D[Dashboard] --> A
+  K -->|new issue / regression| N[Slack · email]
+</pre>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Decisions</span>
+    <h2>Key choices and why</h2>
+    <div class="decisions">
+      <div class="decision">
+        <h3>One Go binary first, split later</h3>
+        <div><p><code>juju serve</code> runs ingest, API and worker in one process. Each lives in its own package, so you can split them into separate services later.</p>
+        <p class="why">Why: with one binary there is one thing to run and debug while you learn. The package boundaries keep the option to scale ingest separately when traffic needs it.</p></div>
+      </div>
+      <div class="decision">
+        <h3>Postgres only, until analytics</h3>
+        <div><p>Store projects, issues and events in Postgres. Add ClickHouse in phase 7.</p>
+        <p class="why">Why: error volume is small at first, and Postgres handles it well. ClickHouse is a columnar database built for "count events by X over time" queries, which is the analytics workload. Adding it before you need it means two databases to operate.</p></div>
+      </div>
+      <div class="decision">
+        <h3>Standard library first</h3>
+        <div><p><code>net/http</code> with Go 1.22+ routing patterns, <code>log/slog</code>, <code>pgx</code> for Postgres, <code>goose</code> for migrations.</p>
+        <p class="why">Why: modern Go's standard router handles <code>POST /api/v1/projects/{id}/events</code> directly. Fewer frameworks means you learn Go itself, and there is less to upgrade.</p></div>
+      </div>
+      <div class="decision">
+        <h3>One event format for every SDK</h3>
+        <div><p>A versioned JSON envelope (<code>v1</code>) that all three SDKs send. The server only knows this format.</p>
+        <p class="why">Why: the contract between SDKs and server is the most expensive thing to change later, because old app versions stay in the wild for years. Versioning it lets v2 come later without breaking them.</p></div>
+      </div>
+      <div class="decision">
+        <h3>Shared TypeScript core</h3>
+        <div><p><code>@juju/core</code> holds the queue, transport, breadcrumbs and event building. The web and React Native SDKs are thin layers over it.</p>
+        <p class="why">Why: both run JavaScript. Fixing a retry bug once fixes it everywhere. Flutter needs its own Dart SDK, but it copies the same design.</p></div>
+      </div>
+      <div class="decision">
+        <h3>Accept fast, process later</h3>
+        <div><p>Ingest validates, answers <code>202 Accepted</code>, and queues the event. A worker does the slow work.</p>
+        <p class="why">Why: an SDK request must never slow down or crash the host app. The queue also absorbs spikes, such as one bad release crashing every user at once.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Phases</span>
+    <h2>What to build, in order</h2>
+    <p>Each phase ends with something you can run and see. "Done when" is checked with the <code>/verify</code> skill: tests plus a manual run against the real system.</p>
+
+    <div class="phases">
+
+      <article class="phase done-phase">
+        <div class="phase-head"><span class="phase-num">Phase 0</span><h3>Foundations</h3><span class="pill done">Done</span></div>
+        <ul>
+          <li><code>git init</code>, monorepo folders: <code>server/</code>, <code>sdks/</code>, <code>dashboard/</code>, <code>examples/</code></li>
+          <li><code>go mod init</code> in <code>server/</code>, <code>cmd/juju/main.go</code> with a <code>serve</code> subcommand</li>
+          <li>Config from environment variables, <code>slog</code> JSON logging, <code>GET /healthz</code></li>
+          <li><code>docker-compose.yml</code> with Postgres, <code>goose</code> migrations, a <code>Makefile</code> (<code>make dev</code>, <code>make test</code>)</li>
+          <li>CI: GitHub Actions running <code>gofmt</code>, <code>go vet</code>, <code>go test -race</code></li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>Everything later needs a running server, a database and a test command. Setting up CI on day one means every later change is checked automatically.</div>
+        <div class="done"><span class="label">Done when</span><code>make dev</code> starts the stack, <code>curl localhost:8080/healthz</code> returns 200, and CI is green.</div>
+      </article>
+
+      <article class="phase done-phase">
+        <div class="phase-head"><span class="phase-num">Phase 1</span><h3>Error ingestion MVP</h3><span class="pill done">Done</span></div>
+        <ul>
+          <li>Tables: <code>organizations</code>, <code>projects</code> (with a public key), <code>issues</code>, <code>events</code></li>
+          <li><code>POST /api/v1/projects/{id}/events</code>: key check, 1&nbsp;MB body limit, gzip support, JSON validation</li>
+          <li>Deduplicate on <code>event_id</code>, because SDKs retry and the same event can arrive twice</li>
+          <li>Fingerprinting: hash of exception type plus normalized in-app frames, giving one issue per fingerprint</li>
+          <li>In-process queue (a buffered channel) between ingest and the worker</li>
+          <li><code>GET /api/v1/projects/{id}/issues</code> and <code>/issues/{id}/events</code></li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>Grouping errors into issues is the core of the product. You can build and test all of it with <code>curl</code> before any SDK exists.</div>
+        <div class="done"><span class="label">Done when</span>Two curl events that differ only in line number land in <strong>one</strong> issue, a different exception type creates a second issue, and a bad key returns 401.</div>
+        <details><summary>Envelope v1 shape</summary>
+<pre class="code">{
+  "sdk": { "name": "juju.flutter", "version": "0.1.0" },
+  "events": [{
+    "event_id": "9b1f…",              // UUID made by the SDK, used for dedupe
+    "type": "error",                  // later: "event", "transaction", "session"
+    "timestamp": "2026-10-19T10:18:00Z",
+    "platform": "dart",               // javascript | dart | …
+    "release": "1.0.0+3",
+    "environment": "production",
+    "exception": {
+      "type": "StateError",
+      "message": "Bad state: no element",
+      "stacktrace": { "frames": [
+        { "function": "CartPage.build", "filename": "package:shop/cart.dart",
+          "lineno": 88, "colno": 12, "in_app": true }
+      ]}
+    },
+    "breadcrumbs": [{ "type": "navigation", "message": "/cart", "timestamp": "…" }],
+    "context": { "device": {}, "os": {}, "app": {} },
+    "user": { "id": "u_123" },
+    "tags": { "flavor": "prod" }
+  }]
+}</pre>
+        </details>
+      </article>
+
+      <article class="phase next">
+        <div class="phase-head"><span class="phase-num">Phase 2</span><h3>Web SDK</h3><span class="pill next">Next</span></div>
+        <ul>
+          <li><code>@juju/core</code>: event builder, in-memory queue, batching, retry with backoff</li>
+          <li><code>@juju/web</code>: <code>window.onerror</code>, <code>unhandledrejection</code>, <code>sendBeacon</code> on page hide</li>
+          <li>Breadcrumbs: console, fetch/XHR, clicks, route changes</li>
+          <li><code>init({ dsn, release, environment })</code>, <code>captureException</code>, <code>setUser</code></li>
+          <li><code>examples/web</code> with "throw" buttons</li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>The browser has the fastest feedback loop, with no build or simulator. The core you write here is reused by React Native.</div>
+        <div class="done"><span class="label">Done when</span>Clicking "throw" in the example app creates an issue with breadcrumbs, and an error thrown offline arrives exactly once after reconnecting.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 3</span><h3>React Native SDK</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li><code>ErrorUtils.setGlobalHandler</code> that always calls the app's previous handler</li>
+          <li>Promise rejection tracking, device and OS context, app version</li>
+          <li>Persist the queue to storage, because a crash kills the app before the send finishes</li>
+          <li>Native crashes (iOS and Android) come later, after the JS layer works</li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>It reuses <code>@juju/core</code>, so most of the work is already done.</div>
+        <div class="done"><span class="label">Done when</span>A JS crash in a <strong>release build</strong> shows up after the app is reopened.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 4</span><h3>Flutter SDK</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li>Hook all three error paths: <code>FlutterError.onError</code> for framework errors, <code>PlatformDispatcher.instance.onError</code> for async errors, and an optional <code>runZonedGuarded</code></li>
+          <li>Parse Dart stack traces into frames, and mark frames from your own <code>package:</code> as <code>in_app</code></li>
+          <li>Device info, persistent offline queue, navigator observer for breadcrumbs</li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>The server and envelope are stable by this point, so the Dart SDK has a fixed target to build against.</div>
+        <div class="done"><span class="label">Done when</span>Framework, async and zone errors each create the right issue from a release build of <code>examples/flutter</code>.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 5</span><h3>Symbolication</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li>Upload API plus a <code>juju-cli</code> command for source maps (web, React Native) and Dart <code>--split-debug-info</code> symbols</li>
+          <li>The worker rewrites minified or obfuscated frames into real file, line and function before fingerprinting</li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>Production stack traces are unreadable without it (<code>a.js:1:48213</code>). It also has to run before fingerprinting, or each build would group errors differently.</div>
+        <div class="done"><span class="label">Done when</span>A minified web error and an obfuscated Flutter error both show the original source location.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 6</span><h3>Dashboard and alerts</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li>Login, organizations, projects, API keys</li>
+          <li>Issue list with counts, first and last seen, and affected users; issue detail with stack trace and breadcrumbs</li>
+          <li>Resolve and ignore, with <em>regression</em> detection: a resolved issue that happens again reopens</li>
+          <li>Alerts on new issues and regressions, sent through a Slack webhook and email</li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>The data model has settled by this point, so the UI doesn't need repeated rewrites. Until now, curl and psql were enough.</div>
+        <div class="done"><span class="label">Done when</span>You fix a bug, resolve its issue, throw the error again, and get a regression alert in Slack.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 7</span><h3>Product analytics</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li><code>capture("checkout_started", props)</code>, <code>identify</code>, and merging anonymous users into known users</li>
+          <li>Add ClickHouse for raw events. Postgres keeps the metadata</li>
+          <li>Trends (count over time by property) first, then funnels and retention</li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>Analytics events outnumber errors by 100× or more. This is the point where a columnar database pays for its extra setup.</div>
+        <div class="done"><span class="label">Done when</span>A trend chart of a custom event, broken down by platform, matches what the example apps sent.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 8</span><h3>Performance and sessions</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li>Sessions and the crash-free sessions rate per release, the number mobile teams watch most</li>
+          <li>Transactions and spans: app start time, screen load, HTTP timings</li>
+          <li>Later: web session replay with <code>rrweb</code></li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>It reuses the SDK transport and the analytics storage from earlier phases.</div>
+        <div class="done"><span class="label">Done when</span>The crash-free rate for a release changes correctly after a forced crash.</div>
+      </article>
+
+      <article class="phase">
+        <div class="phase-head"><span class="phase-num">Phase 9</span><h3>Scale and hardening</h3><span class="pill">Planned</span></div>
+        <ul>
+          <li>Replace the in-process channel with NATS JetStream or Redis Streams, so events survive a restart</li>
+          <li>Per-project rate limits, quotas and client-side sampling</li>
+          <li>PII scrubbing (emails, tokens in URLs), data retention jobs</li>
+          <li>Split ingest into its own deployment, plus load testing with <code>k6</code></li>
+        </ul>
+        <div class="whynow"><span class="label">Why now</span>Only now is there real load to measure. Optimizing earlier would mean guessing.</div>
+        <div class="done"><span class="label">Done when</span>Ingest keeps p99 under 50&nbsp;ms at a target rate, and restarting the worker loses no events.</div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Workflow</span>
+    <h2>How every change gets verified</h2>
+    <p>The project has a <code>/verify</code> skill in <code>.claude/skills/verify/</code>. Run it after any change. It takes these steps:</p>
+    <div class="steps">
+      <div class="step"><span class="mono">diff</span><strong>Find what changed</strong><span>Map each changed file to its component and describe the new behaviour in one sentence.</span></div>
+      <div class="step"><span class="mono">test</span><strong>Write the test</strong><span>Table-driven Go tests, fuzz tests for parsers, golden files for grouping, and SDK tests.</span></div>
+      <div class="step"><span class="mono">run</span><strong>Run the checks</strong><span><code>gofmt</code>, <code>go vet</code>, <code>go test -race</code>, plus the SDK test runners.</span></div>
+      <div class="step"><span class="mono">curl</span><strong>Check it by hand</strong><span>Send real events, then check the API, the database and the dashboard. Try the failure cases too.</span></div>
+      <div class="step"><span class="mono">report</span><strong>Explain</strong><span>What changed and why, what was verified, what wasn't, and one concept to learn.</span></div>
+    </div>
+  </section>
+
+  <footer>Updated as phases complete. Phase status lives on this page; detailed tasks will live in the repo once it exists.</footer>
+</div>

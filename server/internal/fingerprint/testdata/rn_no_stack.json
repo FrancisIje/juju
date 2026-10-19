@@ -1,0 +1,9 @@
+{
+  "event_id": "c4a1f8e2-9d7b-4e36-a5c0-8b1e2f3d4c57",
+  "type": "error",
+  "platform": "javascript",
+  "exception": {
+    "type": "Error",
+    "message": "Network request failed for order 99812"
+  }
+}

@@ -1,0 +1,8 @@
+# local Postgres from `make devdb`
+.devdb/
+# built binaries
+/server/juju
+/server/devdb
+*.test
+*.out
+.DS_Store

@@ -1,0 +1,20 @@
+# Local development database. Same port and credentials as `make devdb`, so
+# the server's default JUJU_DATABASE_URL works with either.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: juju
+      POSTGRES_PASSWORD: juju
+      POSTGRES_DB: juju
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U juju"]
+      interval: 2s
+      retries: 15
+
+volumes:
+  pgdata:

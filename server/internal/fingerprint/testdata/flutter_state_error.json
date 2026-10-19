@@ -1,0 +1,17 @@
+{
+  "event_id": "1f0c6a52-3b8e-4d71-9a2f-6c5e4d3b2a10",
+  "type": "error",
+  "timestamp": "2026-10-19T11:58:00Z",
+  "platform": "dart",
+  "release": "1.4.0+12",
+  "exception": {
+    "type": "StateError",
+    "message": "Bad state: No element",
+    "stacktrace": { "frames": [
+      { "function": "ListBase.first", "filename": "dart:collection/list.dart", "lineno": 42, "in_app": false },
+      { "function": "CartPage.build", "filename": "package:shop/pages/cart_page.dart", "lineno": 88, "colno": 12, "in_app": true },
+      { "function": "StatelessElement.build", "filename": "package:flutter/src/widgets/framework.dart", "lineno": 5689, "in_app": false },
+      { "function": "ComponentElement.performRebuild", "filename": "package:flutter/src/widgets/framework.dart", "lineno": 5617, "in_app": false }
+    ]}
+  }
+}

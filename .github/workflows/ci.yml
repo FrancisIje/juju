@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: go vet
+        run: go vet ./... && go vet -tags=integration ./...
+      - name: Unit tests
+        run: go test -race -count=1 ./...
+      # Integration tests start their own embedded Postgres, exactly like on a
+      # laptop, so CI and local runs can't drift apart.
+      - name: Cache embedded Postgres
+        uses: actions/cache@v4
+        with:
+          path: ~/.embedded-postgres-go
+          key: embedded-postgres-v17-${{ runner.os }}
+      - name: Integration tests
+        run: go test -race -count=1 -tags=integration ./...
+      - name: Fuzz the event parser
+        run: go test ./internal/event -run='^$' -fuzz=FuzzNormalize -fuzztime=20s

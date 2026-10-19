@@ -1,0 +1,16 @@
+{
+  "event_id": "7d2e9b14-6a3c-4f85-b1d0-2e8f7a6c5b49",
+  "type": "error",
+  "timestamp": "2026-10-19T11:58:30Z",
+  "platform": "javascript",
+  "release": "web@2.3.1",
+  "exception": {
+    "type": "TypeError",
+    "message": "Cannot read properties of undefined (reading 'price')",
+    "stacktrace": { "frames": [
+      { "function": "lineTotal", "filename": "https://shop.example.com/assets/index.4b8c2d1e.js", "lineno": 1, "colno": 48213, "in_app": true },
+      { "function": "Array.map", "filename": "<anonymous>", "in_app": false },
+      { "function": "CartSummary", "filename": "https://shop.example.com/assets/index.4b8c2d1e.js", "lineno": 1, "colno": 51022, "in_app": true }
+    ]}
+  }
+}

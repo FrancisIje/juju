@@ -1,0 +1,5 @@
+{
+  "Hash": "6f85a71a969980e9f2cf370051d0fad75bc580edd24c582e8cb2d0e8492ee132",
+  "Title": "TypeError: Cannot read properties of undefined (reading 'price')",
+  "Culprit": "lineTotal (/assets/index.js)"
+}
