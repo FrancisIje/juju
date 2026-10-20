@@ -51,6 +51,9 @@ JUJU_PUBLIC_URL=https://$DOMAIN
 #JUJU_SMTP_FROM=juju <alerts@$DOMAIN>
 EOF
 fi
+# Keep the URL in step with DOMAIN when re-run for a new domain; the rest
+# of the file may hold edits (SMTP) that must survive.
+sed -i "s|^JUJU_PUBLIC_URL=.*|JUJU_PUBLIC_URL=https://$DOMAIN|" /etc/juju/juju.env
 chown root:juju /etc/juju/juju.env
 chmod 640 /etc/juju/juju.env
 
@@ -64,6 +67,8 @@ install -m 755 juju-receive /usr/local/bin/juju-receive
 install -m 755 backup.sh /etc/cron.daily/juju-backup
 systemctl daemon-reload
 systemctl enable juju
+# Restarts only if already running, so it picks up a changed juju.env.
+systemctl try-restart juju
 systemctl reload-or-restart caddy
 
 echo "==> done. Next, from your laptop: deploy/deploy.sh release <host>"
