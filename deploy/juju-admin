@@ -1,0 +1,5 @@
+#!/bin/sh
+# Run a juju admin command on the server with the same user and settings as
+# the service, e.g.  juju-admin user create -email me@x.com -org acme
+exec systemd-run --quiet --pty --wait --collect --uid=juju --gid=juju \
+	-p EnvironmentFile=/etc/juju/juju.env /usr/local/bin/juju "$@"

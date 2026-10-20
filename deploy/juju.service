@@ -1,0 +1,32 @@
+# systemd keeps juju running: starts it at boot, restarts it if it crashes,
+# and sends SIGTERM on stop so it shuts down gracefully.
+[Unit]
+Description=juju server
+Requires=postgresql.service
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=juju
+Group=juju
+EnvironmentFile=/etc/juju/juju.env
+ExecStart=/usr/local/bin/juju serve
+Restart=on-failure
+RestartSec=2
+
+# /var/lib/juju, owned by the juju user: uploaded debug files live here.
+StateDirectory=juju
+WorkingDirectory=/var/lib/juju
+
+# Sandboxing: if juju were ever compromised, it can't write outside its
+# state directory, read home directories or gain privileges.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

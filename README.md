@@ -41,9 +41,30 @@ DSN and setup code for each SDK; the secret key is shown once.
   (`JUJU_SMTP_ADDR`, `JUJU_SMTP_USER`, `JUJU_SMTP_PASSWORD`, `JUJU_SMTP_FROM`). Webhooks must be https and on the
   public internet; `JUJU_ALLOW_HTTP_WEBHOOKS=true` lifts both, for a local fake Slack only.
 - Set `JUJU_PUBLIC_URL` to the address people use, so DSNs and links in alerts point to it.
+- Live: open pages refresh by themselves when errors arrive or a teammate changes an issue
+  (server-sent events on `/api/ui/projects/{id}/live`).
 
 For UI work, `make dashboard-dev` serves the dashboard with hot reload on :5174, talking to `make dev` on
 :8080. The binary embeds the UI at compile time, so after `make dashboard`, restart `make dev` to see it.
+
+## Deploy to a VPS
+
+One Ubuntu 24.04 server runs everything: Postgres, juju (API, workers and the embedded dashboard)
+and Caddy, which gets HTTPS certificates by itself. Point a domain and `demo.` under it at the
+server (no domain yet? `<ip>.sslip.io` and `demo.<ip>.sslip.io` work), then from your laptop:
+
+```bash
+deploy/deploy.sh setup   root@SERVER_IP juju.example.com   # once: packages, firewall, Postgres, Caddy, systemd
+deploy/deploy.sh release root@SERVER_IP                    # build the dashboard + binary, ship, restart
+ssh root@SERVER_IP juju-admin user create -email you@example.com -org Acme   # or sign up on the site
+
+# the web example at https://demo.juju.example.com, with its source map uploaded to juju
+JUJU_URL=https://juju.example.com JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_... deploy/deploy.sh demo root@SERVER_IP
+```
+
+Config lives in `/etc/juju/juju.env` (SMTP for email alerts), logs in `journalctl -u juju`, and
+`/etc/cron.daily/juju-backup` dumps the database daily. Run `deploy/deploy.sh release` again for
+each update: migrations apply on start.
 
 ## Web SDK
 

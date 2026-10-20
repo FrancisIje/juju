@@ -1,0 +1,18 @@
+# Caddy terminates HTTPS (it gets and renews the Let's Encrypt certificate
+# for DOMAIN by itself) and forwards requests to juju on localhost.
+# setup.sh replaces DOMAIN with the real name.
+DOMAIN {
+	encode zstd gzip
+	# Live updates (server-sent events) pass through as they are: Caddy
+	# flushes text/event-stream responses at once, even compressed.
+	reverse_proxy 127.0.0.1:8080
+}
+
+# The web example app (deploy.sh demo), a static site on its own origin,
+# like a real app: its errors go to DOMAIN across origins (CORS).
+demo.DOMAIN {
+	encode zstd gzip
+	root * /var/www/juju-demo
+	redir / /examples/web/
+	file_server
+}
