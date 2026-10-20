@@ -4,13 +4,14 @@
 #   deploy/deploy.sh setup   root@IP DOMAIN   once, on a fresh Ubuntu 24.04 server
 #   deploy/deploy.sh release root@IP          build and ship the current code
 #   deploy/deploy.sh demo    root@IP          build and ship the web example to demo.DOMAIN
+#   deploy/deploy.sh ci-key  root@IP          let GitHub Actions deploy the production branch
 #
 # No domain yet? Use IP.sslip.io (e.g. 203.0.113.7.sslip.io): it resolves to
 # that IP, so Caddy can still get a real HTTPS certificate.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-usage() { sed -n '4,6p' "$0" | sed 's/^# //'; exit 1; }
+usage() { sed -n '4,7p' "$0" | sed 's/^# //'; exit 1; }
 [ $# -ge 2 ] || usage
 cmd=$1 host=$2
 
@@ -24,7 +25,7 @@ setup)
 	;;
 release)
 	# Build for the server's CPU: Hetzner's CAX plans are ARM, CX/CPX are x86.
-	case $(ssh "$host" uname -m) in
+	case $(ssh "$host" juju-receive arch) in
 	aarch64) arch=arm64 ;;
 	x86_64) arch=amd64 ;;
 	*) echo "unsupported server CPU" >&2; exit 1 ;;
@@ -36,12 +37,29 @@ release)
 	# CGO_ENABLED=0 gives a static binary that needs nothing installed on the server.
 	(cd server && CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags='-s -w' -o ../.build/juju ./cmd/juju)
 	echo "==> uploading"
-	scp -q .build/juju "$host:/tmp/juju.new"
-	# Migrations run on start (`juju serve` applies pending ones), so the new
-	# schema is in place before the new code serves traffic.
-	ssh "$host" 'install -m 755 /tmp/juju.new /usr/local/bin/juju && rm /tmp/juju.new && systemctl restart juju &&
-		for i in $(seq 20); do curl -fsS -o /dev/null http://127.0.0.1:8080/readyz && echo "==> juju is up" && exit 0; sleep 1; done;
-		echo "juju did not become ready; see: journalctl -u juju -n 50" >&2; exit 1'
+	ssh "$host" juju-receive install < .build/juju
+	;;
+ci-key)
+	# A fresh key for GitHub Actions, allowed to run only juju-receive.
+	# Running this again replaces the old key (rotation).
+	command -v gh >/dev/null || { echo "needs the GitHub CLI: brew install gh" >&2; exit 1; }
+	# CI must trust the server's host key, or anyone between GitHub and the
+	# server could pretend to be it. Take it from your own known_hosts.
+	known=$(ssh-keygen -F "${host#*@}" | grep -v '^#') ||
+		{ echo "run 'ssh $host' once first, so its host key is in ~/.ssh/known_hosts" >&2; exit 1; }
+	dir=$(mktemp -d)
+	trap 'rm -rf "$dir"' EXIT
+	ssh-keygen -q -t ed25519 -N '' -C github-actions-deploy -f "$dir/key"
+	ssh "$host" "install -d -m 700 ~/.ssh && touch ~/.ssh/authorized_keys &&
+		sed -i '/ github-actions-deploy\$/d' ~/.ssh/authorized_keys &&
+		echo 'restrict,command=\"/usr/local/bin/juju-receive\" $(cat "$dir/key.pub")' >> ~/.ssh/authorized_keys"
+	# Secrets live in the "production" environment: only jobs that declare
+	# `environment: production` can read them.
+	gh api -X PUT 'repos/{owner}/{repo}/environments/production' > /dev/null
+	gh secret set DEPLOY_SSH_KEY --env production < "$dir/key"
+	gh secret set DEPLOY_KNOWN_HOSTS --env production --body "$known"
+	gh secret set DEPLOY_HOST --env production --body "$host"
+	echo "==> done: pushing to the production branch now deploys"
 	;;
 demo)
 	# The example page loads ../../sdks/web/dist/juju.min.js and

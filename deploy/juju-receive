@@ -1,0 +1,55 @@
+#!/bin/sh
+# The one command the GitHub Actions deploy key may run: its line in
+# authorized_keys forces it, so a leaked key can replace juju but can't open
+# a shell. deploy.sh uses it too, so manual and CI releases work the same.
+#
+#   juju-receive arch      print the CPU type, so the right binary gets built
+#   juju-receive install   read a juju binary on stdin, install it, restart
+set -euf
+# Over the restricted key, what the client asked for arrives in
+# SSH_ORIGINAL_COMMAND instead of as arguments.
+# shellcheck disable=SC2086
+set -- ${SSH_ORIGINAL_COMMAND:-$*}
+[ "${1:-}" = juju-receive ] && shift
+
+ready() {
+	for _ in $(seq 20); do
+		curl -fsS -o /dev/null http://127.0.0.1:8080/readyz && return 0
+		sleep 1
+	done
+	return 1
+}
+
+case "${1:-}" in
+arch) uname -m ;;
+install)
+	bin=/usr/local/bin/juju
+	new=$(mktemp /usr/local/bin/.juju.XXXXXX)
+	trap 'rm -f "$new"' EXIT
+	cat > "$new"
+	chmod 755 "$new"
+	[ -f "$bin" ] && cp -p "$bin" "$bin.prev"
+	# mv on the same filesystem is atomic: there's never a half-written juju.
+	mv "$new" "$bin"
+	# Migrations run on start (`juju serve` applies pending ones), so the new
+	# schema is in place before the new code serves traffic.
+	systemctl restart juju
+	if ready; then
+		echo "==> juju is up"
+		exit 0
+	fi
+	echo "juju did not become ready:" >&2
+	journalctl -u juju -n 30 --no-pager >&2
+	if [ -f "$bin.prev" ]; then
+		echo "==> rolling back to the previous version" >&2
+		mv "$bin.prev" "$bin"
+		systemctl restart juju
+		ready && echo "==> previous version is up" >&2
+	fi
+	exit 1
+	;;
+*)
+	echo "usage: juju-receive arch|install" >&2
+	exit 2
+	;;
+esac

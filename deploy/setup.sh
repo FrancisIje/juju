@@ -60,6 +60,7 @@ sed "s/DOMAIN {/$DOMAIN {/" Caddyfile > /etc/caddy/Caddyfile
 # The web example's files (deploy.sh demo puts them here).
 install -d -m 755 /var/www/juju-demo
 install -m 755 juju-admin /usr/local/bin/juju-admin
+install -m 755 juju-receive /usr/local/bin/juju-receive
 install -m 755 backup.sh /etc/cron.daily/juju-backup
 systemctl daemon-reload
 systemctl enable juju

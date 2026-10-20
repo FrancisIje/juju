@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # deploy.yml runs these same checks before every deploy.
+  workflow_call:
 
 jobs:
   docs:
