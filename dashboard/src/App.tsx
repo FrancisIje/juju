@@ -5,14 +5,15 @@ import { AppContext, type AppState } from "./lib/app";
 import { match, navigate, useLocation } from "./lib/router";
 import { Issue } from "./pages/Issue";
 import { Issues } from "./pages/Issues";
+import { InvitePage } from "./pages/InvitePage";
 import { Login } from "./pages/Login";
 import { NewProject } from "./pages/NewProject";
 import { Settings, type SettingsTab } from "./pages/Settings";
 
 /** The pages you can open without being logged in. */
-const authPage = (path: string) => path === "/login" || path === "/signup";
+const authPage = (path: string) => path === "/login" || path === "/signup" || path.startsWith("/invite/");
 
-const settingsTabs: SettingsTab[] = ["setup", "keys", "alerts", "files"];
+const settingsTabs: SettingsTab[] = ["setup", "keys", "alerts", "files", "team"];
 
 export function App() {
   const { path, query } = useLocation();
@@ -58,6 +59,21 @@ export function App() {
     else if (me.organizations[0]) navigate(`/new?org=${me.organizations[0].id}`, { replace: true });
   }, [me, path, first]);
 
+  const invite = match("/invite/:token", path);
+  if (invite) {
+    return (
+      <InvitePage
+        token={invite.token!}
+        onJoined={async (orgId) => {
+          // Straight into the organization just joined, not the first one.
+          const m = await api<Me>("/api/ui/me");
+          setMe(m);
+          const project = m.organizations.find((o) => o.id === orgId)?.projects[0];
+          navigate(project ? `/p/${project.id}/issues` : `/new?org=${orgId}`, { replace: true });
+        }}
+      />
+    );
+  }
   if (authPage(path)) {
     return (
       <Login

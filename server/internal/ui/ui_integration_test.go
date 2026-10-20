@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -360,5 +362,184 @@ func TestDashboardFlowEndToEnd(t *testing.T) {
 	ada.do("POST", "/api/ui/auth/logout", nil, true, nil)
 	if code := ada.do("GET", "/api/ui/me", nil, false, nil); code != 401 {
 		t.Fatalf("after logout: %d, want 401", code)
+	}
+}
+
+func TestInvites(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st := store.New(pool)
+	ctx := context.Background()
+	cfg := config.Config{PublicURL: "http://juju.test"} // sign-up closed
+	srv := httptest.NewServer(server.Routes(server.Deps{Pool: pool, Store: st, Queue: queue.NewChan(10), MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: &alert.Notifier{Settings: st, Log: log}, Config: cfg, Log: log}))
+	defer srv.Close()
+
+	user := func(email, org string) *client {
+		hash, _ := auth.HashPassword("correct horse battery")
+		if _, err := st.CreateUser(ctx, email, "", hash, org, store.JoinOrCreate); err != nil {
+			t.Fatal(err)
+		}
+		c := newClient(t, srv.URL)
+		if code := c.do("POST", "/api/ui/auth/login", map[string]string{"email": email, "password": "correct horse battery"}, true, nil); code != 200 {
+			t.Fatalf("login %s: %d", email, code)
+		}
+		return c
+	}
+	orgOf := func(c *client) int64 {
+		var me struct{ Organizations []struct{ ID int64 } }
+		c.do("GET", "/api/ui/me", nil, false, &me)
+		return me.Organizations[0].ID
+	}
+	ada := user("ada@team.test", "team-org")
+	org := orgOf(ada)
+	var proj struct{ ID int64 }
+	ada.do("POST", fmt.Sprintf("/api/ui/orgs/%d/projects", org), map[string]string{"name": "team-app"}, true, &proj)
+	projectPath := fmt.Sprintf("/api/ui/projects/%d/issues", proj.ID)
+
+	invite := func(c *client) (string, int64) {
+		t.Helper()
+		var r struct {
+			URL    string
+			Invite struct{ ID int64 }
+		}
+		if code := c.do("POST", fmt.Sprintf("/api/ui/orgs/%d/invites", org), nil, true, &r); code != 201 {
+			t.Fatalf("create invite: %d", code)
+		}
+		if !strings.HasPrefix(r.URL, "http://juju.test/invite/") {
+			t.Fatalf("url = %q", r.URL)
+		}
+		return strings.TrimPrefix(r.URL, "http://juju.test/invite/"), r.Invite.ID
+	}
+
+	// Bob, logged out, opens the link and sees who invited him to what.
+	token, _ := invite(ada)
+	bob := newClient(t, srv.URL)
+	var info map[string]any
+	if code := bob.do("GET", "/api/ui/invites/"+token, nil, false, &info); code != 200 || info["organization"] != "team-org" || info["invited_by"] != "ada@team.test" {
+		t.Fatalf("invite info: %d %v", code, info)
+	}
+	// Sign-up is closed on this server, but the invite lets him in, into
+	// team-org (no organization of his own), as a member.
+	signup := map[string]string{"email": "bob@team.test", "name": "Bob", "password": "another long password", "invite": token}
+	if code := bob.do("POST", "/api/ui/auth/signup", signup, true, nil); code != 201 {
+		t.Fatalf("sign-up with invite: %d", code)
+	}
+	var me struct {
+		Organizations []struct {
+			ID   int64
+			Role string
+		}
+	}
+	bob.do("GET", "/api/ui/me", nil, false, &me)
+	if len(me.Organizations) != 1 || me.Organizations[0].ID != org || me.Organizations[0].Role != "member" {
+		t.Fatalf("bob's orgs = %+v", me.Organizations)
+	}
+	if code := bob.do("GET", projectPath, nil, false, nil); code != 200 {
+		t.Fatalf("bob reading the team's project: %d", code)
+	}
+
+	// The link worked once.
+	carolNew := newClient(t, srv.URL)
+	if code := carolNew.do("POST", "/api/ui/auth/signup", map[string]string{"email": "carol-new@team.test", "password": "another long password", "invite": token}, true, nil); code != 404 {
+		t.Fatalf("reusing a used invite: %d, want 404", code)
+	}
+	if _, _, err := st.UserByEmail(ctx, "carol-new@team.test"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a failed invite sign-up must not create the account: %v", err)
+	}
+	if code := bob.do("GET", "/api/ui/invites/"+token, nil, false, nil); code != 404 {
+		t.Fatalf("used invite still shows: %d", code)
+	}
+
+	// Members work on projects but don't manage people.
+	if code := bob.do("POST", fmt.Sprintf("/api/ui/orgs/%d/invites", org), nil, true, nil); code != 403 {
+		t.Fatalf("member creating an invite: %d, want 403", code)
+	}
+	var team struct {
+		Members []struct {
+			UserID int64 `json:"user_id"`
+			Role   string
+		}
+		Invites []struct{ ID int64 }
+	}
+	bob.do("GET", fmt.Sprintf("/api/ui/orgs/%d/members", org), nil, false, &team)
+	if len(team.Members) != 2 || team.Invites != nil {
+		t.Fatalf("member's view of the team: %+v (members see people, not invite links)", team)
+	}
+	adaID, bobID := team.Members[0].UserID, team.Members[1].UserID
+	if code := bob.do("DELETE", fmt.Sprintf("/api/ui/orgs/%d/members/%d", org, adaID), nil, true, nil); code != 403 {
+		t.Fatalf("member removing the owner: %d, want 403", code)
+	}
+
+	// Carol already has an account: she logs in and accepts.
+	carol := user("carol@team.test", "carols-own-org")
+	token2, _ := invite(ada)
+	var acc map[string]any
+	if code := carol.do("POST", "/api/ui/invites/"+token2+"/accept", nil, true, &acc); code != 200 || acc["already_member"] != false {
+		t.Fatalf("accept: %d %v", code, acc)
+	}
+	// Accepting again, with a fresh link, while already a member leaves that
+	// link unused for whoever it was meant for.
+	token3, id3 := invite(ada)
+	carol.do("POST", "/api/ui/invites/"+token3+"/accept", nil, true, &acc)
+	if acc["already_member"] != true {
+		t.Fatalf("second accept: %v", acc)
+	}
+	if code := bob.do("GET", "/api/ui/invites/"+token3, nil, false, nil); code != 200 {
+		t.Fatalf("the unused link should still work: %d", code)
+	}
+
+	// Revoking a link stops it.
+	if code := ada.do("DELETE", fmt.Sprintf("/api/ui/orgs/%d/invites/%d", org, id3), nil, true, nil); code != 204 {
+		t.Fatalf("revoke: %d", code)
+	}
+	if code := bob.do("GET", "/api/ui/invites/"+token3, nil, false, nil); code != 404 {
+		t.Fatalf("revoked invite still works: %d", code)
+	}
+
+	// An expired link doesn't work.
+	if _, err := st.CreateInvite(ctx, org, adaID, auth.HashToken("expired-token"), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if code := bob.do("GET", "/api/ui/invites/expired-token", nil, false, nil); code != 404 {
+		t.Fatalf("expired invite: %d", code)
+	}
+
+	// Two people opening one link at the same moment: only one gets in.
+	race, _ := invite(ada)
+	var wins atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 2 {
+		hash, _ := auth.HashPassword("correct horse battery")
+		u, _ := st.CreateUser(ctx, fmt.Sprintf("racer%d@team.test", i), "", hash, fmt.Sprintf("racer-org-%d", i), store.NewOrganization)
+		wg.Go(func() {
+			if _, _, err := st.AcceptInvite(ctx, auth.HashToken(race), u.ID); err == nil {
+				wins.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if wins.Load() != 1 {
+		t.Fatalf("%d people joined with one link, want 1", wins.Load())
+	}
+
+	// Outsiders can't see the team, or revoke this org's invites through
+	// their own organization's URL.
+	eve := user("eve@elsewhere.test", "eve-org")
+	if code := eve.do("GET", fmt.Sprintf("/api/ui/orgs/%d/members", org), nil, false, nil); code != 404 {
+		t.Fatalf("outsider reading members: %d, want 404", code)
+	}
+	_, id5 := invite(ada)
+	if code := eve.do("DELETE", fmt.Sprintf("/api/ui/orgs/%d/invites/%d", orgOf(eve), id5), nil, true, nil); code != 404 {
+		t.Fatalf("revoking another org's invite: %d, want 404", code)
+	}
+
+	// Removing Bob ends his access at once; the last owner can't be removed.
+	if code := ada.do("DELETE", fmt.Sprintf("/api/ui/orgs/%d/members/%d", org, bobID), nil, true, nil); code != 204 {
+		t.Fatalf("remove bob: %d", code)
+	}
+	if code := bob.do("GET", projectPath, nil, false, nil); code != 404 {
+		t.Fatalf("removed member reading the project: %d, want 404", code)
+	}
+	if code := ada.do("DELETE", fmt.Sprintf("/api/ui/orgs/%d/members/%d", org, adaID), nil, true, nil); code != 409 {
+		t.Fatalf("removing the last owner: %d, want 409", code)
 	}
 }

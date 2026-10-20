@@ -57,6 +57,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/ui/projects/{project}/alerts/test", p(a.testAlerts))
 	mux.Handle("GET /api/ui/projects/{project}/files", p(a.files))
 	mux.Handle("GET /api/ui/projects/{project}/live", p(a.live))
+
+	a.registerTeam(mux)
 }
 
 type projectHandler func(w http.ResponseWriter, r *http.Request, projectID int64, user store.User)
@@ -98,6 +100,10 @@ type signupRequest struct {
 	Name         string `json:"name"`
 	Password     string `json:"password"`
 	Organization string `json:"organization"`
+	// Invite is the token from an invite link. With one, sign-up works even
+	// when it's closed, and joins the inviting organization instead of
+	// creating one.
+	Invite string `json:"invite"`
 }
 
 func (a *API) signup(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +116,7 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "count users", err)
 		return
 	}
-	if n > 0 && !a.AllowSignup {
+	if n > 0 && !a.AllowSignup && req.Invite == "" {
 		httpx.WriteError(w, http.StatusForbidden, "sign-up is closed on this server; ask an owner for an account")
 		return
 	}
@@ -124,7 +130,7 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := strings.TrimSpace(req.Organization)
-	if org == "" {
+	if org == "" && req.Invite == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "name your organization, for example your company or team")
 		return
 	}
@@ -133,7 +139,16 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "hash password", err)
 		return
 	}
-	u, err := a.Store.CreateUser(r.Context(), email, strings.TrimSpace(req.Name), hash, org, store.NewOrganization)
+	var u store.User
+	if req.Invite != "" {
+		u, _, err = a.Store.CreateUserWithInvite(r.Context(), email, strings.TrimSpace(req.Name), hash, auth.HashToken(req.Invite))
+	} else {
+		u, err = a.Store.CreateUser(r.Context(), email, strings.TrimSpace(req.Name), hash, org, store.NewOrganization)
+	}
+	if errors.Is(err, store.ErrInviteInvalid) {
+		httpx.WriteError(w, http.StatusNotFound, inviteGone)
+		return
+	}
 	if errors.Is(err, store.ErrConflict) {
 		httpx.WriteError(w, http.StatusConflict, "an account with this email already exists; log in instead")
 		return

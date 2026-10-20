@@ -7,13 +7,15 @@ import { takeSecret } from "../lib/secrets";
 import { platforms, snippet, type Platform } from "../lib/snippets";
 import { bytes, exact, relative } from "../lib/time";
 import { useApi } from "../lib/useApi";
+import { Team } from "./Team";
 
-export type SettingsTab = "setup" | "keys" | "alerts" | "files";
+export type SettingsTab = "setup" | "keys" | "alerts" | "files" | "team";
 const tabs: { id: SettingsTab; label: string }[] = [
   { id: "setup", label: "Setup" },
   { id: "keys", label: "Keys" },
   { id: "alerts", label: "Alerts" },
   { id: "files", label: "Debug files" },
+  { id: "team", label: "Team" },
 ];
 
 export function Settings({ projectId, tab }: { projectId: number; tab: SettingsTab }) {
@@ -29,6 +31,9 @@ export function Settings({ projectId, tab }: { projectId: number; tab: SettingsT
   }, [projectId]);
 
   const p = project.data?.project;
+  const { me } = useApp();
+  // The team is the organization that owns this project.
+  const org = me.organizations.find((o) => o.projects.some((pr) => pr.id === projectId));
   return (
     <div className="page" style={{ maxWidth: 920 }}>
       <div className="page-head">
@@ -50,6 +55,7 @@ export function Settings({ projectId, tab }: { projectId: number; tab: SettingsT
       {p && tab === "keys" && <Keys project={p} secret={secret} onSecret={setSecret} />}
       {tab === "alerts" && <Alerts projectId={projectId} />}
       {p && tab === "files" && <Files project={p} />}
+      {tab === "team" && org && <Team org={org} />}
     </div>
   );
 }

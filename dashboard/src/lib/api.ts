@@ -171,3 +171,33 @@ export interface DebugFile {
   size: number;
   created_at: string;
 }
+
+export interface Member {
+  user_id: number;
+  email: string;
+  name: string;
+  role: "owner" | "member";
+  joined_at: string;
+}
+
+export interface PendingInvite {
+  id: number;
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface TeamView {
+  members: Member[];
+  /** Only sent to owners. */
+  invites?: PendingInvite[];
+  your_role: "owner" | "member";
+  you: number;
+}
+
+export interface InviteInfo {
+  organization_id: number;
+  organization: string;
+  invited_by: string;
+  expires_at: string;
+}

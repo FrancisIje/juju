@@ -57,6 +57,7 @@ export function Shell({ projectId, children }: { projectId: number | null; child
         { id: "go-alerts", group: "Go to", label: "Settings: Alerts", run: () => navigate(`${base}/settings/alerts`) },
         { id: "go-keys", group: "Go to", label: "Settings: Keys", run: () => navigate(`${base}/settings/keys`) },
         { id: "go-files", group: "Go to", label: "Settings: Debug files", run: () => navigate(`${base}/settings/files`) },
+        { id: "go-team", group: "Go to", label: "Invite teammates (Settings: Team)", run: () => navigate(`${base}/settings/team`) },
       );
     }
     for (const p of projects) {

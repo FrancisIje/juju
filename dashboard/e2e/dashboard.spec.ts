@@ -5,6 +5,19 @@ const shots = process.env.JUJU_E2E_SHOTS;
 const slack = process.env.JUJU_E2E_SLACK;
 
 async function shoot(page: Page, name: string) {
+  // Every checked screen must fit a phone: nothing may make the page itself
+  // scroll sideways (wide tables and code scroll inside their own box).
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // .main is its own scroll area, so too-wide content scrolls it sideways
+  // while the document stays 390px: measure both. Intended scrolling (code,
+  // tables, tab rows) happens in boxes deeper inside.
+  const extra = await page.evaluate(() => {
+    const main = document.querySelector(".main");
+    return Math.max(document.documentElement.scrollWidth - window.innerWidth, main ? main.scrollWidth - main.clientWidth : 0);
+  });
+  expect(extra, `${name}: page is ${extra}px wider than a 390px phone`).toBeLessThanOrEqual(0);
+  await page.setViewportSize({ width: 1360, height: 860 });
   if (!shots) return;
   for (const theme of ["dark", "light"] as const) {
     await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
@@ -46,7 +59,7 @@ async function sendError(page: Page, dsn: string, message: string, release = "we
   expect(res.status()).toBe(202);
 }
 
-test("first run → project → error → resolve → regression alert", async ({ page }) => {
+test("first run → project → error → resolve → regression alert → invite a teammate", async ({ page, browser }) => {
   const errors: string[] = [];
   // Before logging in, GET /api/ui/me answers 401: that's how the app learns
   // nobody is logged in, and Chrome logs every 4xx. After login, any 401 is
@@ -156,6 +169,38 @@ test("first run → project → error → resolve → regression alert", async (
     await expect(page.locator("table.table tbody tr")).toHaveCount(4);
     await expect(page.locator("table.table")).toContainText("regression");
   }
+
+  // Invite a teammate. Sign-up is closed now (Ada was the first account),
+  // so the invite link is the only way in.
+  await page.goto(page.url().replace(/\/p\/(\d+)\/.*$/, "/p/$1/settings/team"));
+  await page.getByRole("button", { name: "Create invite link" }).click();
+  const link = (await page.locator(".banner.ok pre.code").textContent())!;
+  expect(link).toMatch(/\/invite\/[\w-]{43}$/);
+  await shoot(page, "08-team");
+
+  const bobContext = await browser.newContext(); // another person, logged out
+  const bob = await bobContext.newPage();
+  await bob.goto(link);
+  await expect(bob.getByRole("heading", { name: "Join Acme" })).toBeVisible();
+  await expect(bob.getByText(/Ada invited you/)).toBeVisible();
+  await shoot(bob, "09-invite");
+  await bob.getByLabel("Your name").fill("Bob");
+  await bob.getByLabel("Email").fill("bob@example.com");
+  await bob.getByLabel("Password").fill("another long password");
+  await bob.getByRole("button", { name: "Create account and join Acme" }).click();
+  // Straight into Ada's project, seeing the same issues.
+  await expect(bob).toHaveURL(/\/p\/\d+\/issues$/);
+  await expect(bob.locator(".issue-row")).toHaveCount(2);
+
+  // The link worked once.
+  const carol = await (await browser.newContext()).newPage();
+  await carol.goto(link);
+  await expect(carol.getByRole("heading", { name: "This invite doesn't work any more" })).toBeVisible();
+
+  // Ada sees Bob on the team, as a member.
+  await page.reload();
+  await expect(page.getByRole("row", { name: /Bob.*Member/ })).toBeVisible();
+  await bobContext.close();
 
   expect(errors).toEqual([]);
 });

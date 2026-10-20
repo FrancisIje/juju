@@ -200,7 +200,12 @@ pre.code {
   background: var(--bg-sunken); border: 1px solid var(--line); border-radius: var(--radius);
   font: 400 var(--text-sm) / 1.6 var(--font-mono); color: var(--text);
 }
-.code-wrap { position: relative; }
+/* min-width: 0 is what lets a long DSN or invite link scroll inside its
+   code block. Grid children are never narrower than their content by
+   default (min-width: auto), so without it one long line pushed the Setup
+   and Team pages 200-300px past a phone's width. The e2e test measures it. */
+.code-wrap { position: relative; min-width: 0; }
+.page > *, .panel, .banner, .banner > *, .field { min-width: 0; }
 .code-wrap .copy { position: absolute; top: 6px; right: 6px; }
 
 .banner { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); font-size: var(--text-sm); }

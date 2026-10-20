@@ -191,6 +191,19 @@ func (s *Service) setCookie(w http.ResponseWriter, value string, expires time.Ti
 
 func NormalizeEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
 
+// NewToken returns 32 random bytes as URL-safe text: unguessable, so it can
+// stand in for a password in a link.
+func NewToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// HashToken is what's stored for a token: its SHA-256.
+func HashToken(token string) []byte { return hash(token) }
+
 func hash(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
