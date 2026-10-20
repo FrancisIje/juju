@@ -18,7 +18,11 @@ export function Login({ page, onDone }: { page: "login" | "signup"; onDone: () =
   useEffect(() => {
     api<Setup>("/api/ui/auth/setup")
       .then(setSetup)
-      .catch(() => setSetup({ needs_setup: false, signup_open: false }));
+      // If the check fails (the server restarting during a deploy, a
+      // network blip), don't claim the server is private: it said no such
+      // thing. Assume the default, sign-up open; a private server still
+      // answers the form itself with its real reason.
+      .catch(() => setSetup({ needs_setup: false, signup_open: true }));
   }, []);
   useEffect(() => setError(""), [page]);
 

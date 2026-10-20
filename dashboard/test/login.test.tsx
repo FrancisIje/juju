@@ -54,3 +54,14 @@ test("sign-up sends the form and shows why it failed", async () => {
   await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("already exists"));
   expect(calls.at(-1)).toMatchObject({ method: "POST", path: "/api/ui/auth/signup", body: { email: "eve@example.com", organization: "Acme" } });
 });
+
+test("if the sign-up check fails, the page doesn't claim the server is private", async () => {
+  // e.g. Caddy answering 502 while juju restarts during a deploy
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("bad gateway", { status: 502 })));
+  const { unmount } = render(<Login page="login" onDone={() => {}} />);
+  expect(await screen.findByRole("link", { name: "Create an account" })).toBeTruthy();
+  unmount();
+  render(<Login page="signup" onDone={() => {}} />);
+  expect(await screen.findByRole("heading", { name: "Create an account" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Join with an invite" })).toBeNull();
+});
