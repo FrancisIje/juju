@@ -6,3 +6,6 @@
 *.test
 *.out
 .DS_Store
+
+# server data (uploaded debug files) when run from the repo
+/server/data/

@@ -111,7 +111,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <span class="eyebrow">Project plan · Go · started Oct 2026</span>
     <h1>juju roadmap</h1>
     <p class="lede">Error tracking (like Sentry) and product analytics (like PostHog) in one Go backend, with SDKs for Flutter, React Native and the web. This page sets the order to build it in and explains the reason behind each choice.</p>
-    <div class="logline">[2026-10-20T09:30:00Z] <b>INFO</b> phase=4 status=done msg="framework, async and zone errors verified from an Android release build; next: symbolication"</div>
+    <div class="logline">[2026-10-20T10:30:00Z] <b>INFO</b> phase=5 status=done msg="minified web, obfuscated Flutter and Hermes frames show original source; next: dashboard"</div>
   </header>
 
   <section>
@@ -273,8 +273,8 @@ flowchart LR
         <div class="done"><span class="label">Done when</span>Framework, async and zone errors each create the right issue from a release build of <code>examples/flutter</code>.</div>
       </article>
 
-      <article class="phase next">
-        <div class="phase-head"><span class="phase-num">Phase 5</span><h3>Symbolication</h3><span class="pill next">Next</span></div>
+      <article class="phase done-phase">
+        <div class="phase-head"><span class="phase-num">Phase 5</span><h3>Symbolication</h3><span class="pill done">Done</span></div>
         <ul>
           <li>Upload API plus a <code>juju-cli</code> command for source maps (web, React Native) and Dart <code>--split-debug-info</code> symbols</li>
           <li>The worker rewrites minified or obfuscated frames into real file, line and function before fingerprinting</li>
@@ -283,8 +283,8 @@ flowchart LR
         <div class="done"><span class="label">Done when</span>A minified web error and an obfuscated Flutter error both show the original source location.</div>
       </article>
 
-      <article class="phase">
-        <div class="phase-head"><span class="phase-num">Phase 6</span><h3>Dashboard and alerts</h3><span class="pill">Planned</span></div>
+      <article class="phase next">
+        <div class="phase-head"><span class="phase-num">Phase 6</span><h3>Dashboard and alerts</h3><span class="pill next">Next</span></div>
         <ul>
           <li>Login, organizations, projects, API keys</li>
           <li>Issue list with counts, first and last seen, and affected users; issue detail with stack trace and breadcrumbs</li>

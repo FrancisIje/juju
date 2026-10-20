@@ -42,7 +42,7 @@ func runAll(store Store, ids ...string) {
 		ch <- &event.Event{EventID: id, Exception: &event.Exception{Type: "E"}}
 	}
 	close(ch)
-	Run(context.Background(), ch, store, quiet, 3)
+	Run(context.Background(), ch, store, nil, quiet, 3)
 }
 
 func TestRunDrainsEverything(t *testing.T) {
@@ -74,5 +74,32 @@ func TestGivesUpAfterRetries(t *testing.T) {
 	runAll(s, "a")
 	if len(s.saved) != 0 || s.calls != attempts {
 		t.Fatalf("calls = %d, want exactly %d attempts", s.calls, attempts)
+	}
+}
+
+type renamer struct{}
+
+// Symbolicate stands in for the real thing: it renames the top frame.
+func (renamer) Symbolicate(_ context.Context, e *event.Event) {
+	e.Exception.Stacktrace.Frames[0].Function = "lineTotal"
+}
+
+type fpStore struct{ culprit string }
+
+func (s *fpStore) SaveEvent(_ context.Context, _ *event.Event, fp fingerprint.Result) (bool, error) {
+	s.culprit = fp.Culprit
+	return true, nil
+}
+
+// Grouping must use the symbolicated frames. If the fingerprint were
+// computed first, every deploy (new minified names) would start new issues.
+func TestSymbolicatesBeforeFingerprinting(t *testing.T) {
+	ch := make(chan *event.Event, 1)
+	ch <- &event.Event{Exception: &event.Exception{Type: "TypeError", Stacktrace: &event.Stacktrace{Frames: []event.Frame{{Function: "o", Filename: "app.js", InApp: true}}}}}
+	close(ch)
+	s := &fpStore{}
+	Run(context.Background(), ch, s, renamer{}, quiet, 1)
+	if s.culprit != "lineTotal (app.js)" {
+		t.Fatalf("culprit = %q: fingerprinted before symbolication", s.culprit)
 	}
 }

@@ -40,7 +40,7 @@ func Normalize(raw json.RawMessage, now time.Time) (*Event, error) {
 		return nil, ValidationError{{"event", "invalid JSON: " + err.Error()}}
 	}
 	// Server-owned fields: whatever the client sent is discarded.
-	e.SDK, e.Repairs, e.ProjectID = SDK{}, nil, 0
+	e.SDK, e.Repairs, e.ProjectID, e.Symbolication = SDK{}, nil, 0, nil
 	e.ReceivedAt = now.UTC()
 
 	if errs := validateRequired(&e); errs != nil {
@@ -117,6 +117,7 @@ func (e *Event) repairFields() {
 		}
 		for i := range st.Frames {
 			f := &st.Frames[i]
+			f.Raw = nil // server-owned: set only by symbolication
 			f.Function, _ = truncate(f.Function, maxFrameField)
 			f.Filename, _ = truncate(f.Filename, maxFrameField)
 		}

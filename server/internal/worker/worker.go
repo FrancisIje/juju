@@ -20,6 +20,12 @@ type Store interface {
 	SaveEvent(ctx context.Context, e *event.Event, fp fingerprint.Result) (inserted bool, err error)
 }
 
+// Symbolicator rewrites minified or obfuscated frames into source
+// locations. Optional: nil skips symbolication.
+type Symbolicator interface {
+	Symbolicate(ctx context.Context, e *event.Event)
+}
+
 const (
 	attempts  = 3
 	baseDelay = 100 * time.Millisecond
@@ -28,19 +34,19 @@ const (
 // Run starts n workers reading from events and blocks until the channel is
 // closed and every buffered event has been processed. Draining before
 // returning is what makes a clean shutdown (Ctrl-C, deploy) lose nothing.
-func Run(ctx context.Context, events <-chan *event.Event, store Store, log *slog.Logger, n int) {
+func Run(ctx context.Context, events <-chan *event.Event, store Store, sym Symbolicator, log *slog.Logger, n int) {
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
 			for e := range events {
-				process(ctx, e, store, log)
+				process(ctx, e, store, sym, log)
 			}
 		})
 	}
 	wg.Wait()
 }
 
-func process(ctx context.Context, e *event.Event, store Store, log *slog.Logger) {
+func process(ctx context.Context, e *event.Event, store Store, sym Symbolicator, log *slog.Logger) {
 	log = log.With("project_id", e.ProjectID, "event_id", e.EventID)
 
 	// One malformed event must not kill the worker goroutine, or the queue
@@ -51,6 +57,14 @@ func process(ctx context.Context, e *event.Event, store Store, log *slog.Logger)
 		}
 	}()
 
+	// Symbolicate before fingerprinting, so issues group by real names and
+	// files, which stay the same across builds, instead of minified ones.
+	if sym != nil {
+		sym.Symbolicate(ctx, e)
+		if e.Symbolication != nil && e.Symbolication.Status != "symbolicated" {
+			log.Debug("symbolication incomplete", "status", e.Symbolication.Status, "notes", e.Symbolication.Notes)
+		}
+	}
 	fp := fingerprint.Compute(e)
 	var err error
 	for i := range attempts {

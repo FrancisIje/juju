@@ -1,0 +1,13 @@
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+pid: 86717, tid: 6094925824, name DartWorker
+os: macos arch: arm64 comp: no sim: no
+build_id: 'b4485c2e9c56418697e466d0c2ca3195'
+isolate_dso_base: 105270000, vm_dso_base: 105270000
+isolate_instructions: 105280000, vm_instructions: 105274000
+#0      CartPage.total (file:///shop/bin/shop.dart:11:76)
+#1      CartPage.build (file:///shop/bin/shop.dart:8:27)
+#2      checkout (file:///shop/bin/shop.dart:17:20)
+<asynchronous suspension>
+#3      main (file:///shop/bin/shop.dart:22:5)
+<asynchronous suspension>
+

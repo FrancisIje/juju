@@ -1,0 +1,23 @@
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+pid: 2912, tid: 129266021339208, name 1.ui
+os: android arch: arm64 comp: yes sim: no
+build_id: 'b718850940a6ab861ab806427ac43cab'
+isolate_dso_base: 758d1e660000, vm_dso_base: 758d1e660000
+isolate_instructions: 758d1e746a80, vm_instructions: 758d1e730000
+#0      scenarios.<anonymous closure>.<anonymous closure>.<anonymous closure> (/Users/mac/juju/examples/flutter/lib/main.dart:64:81)
+#1      new Future.delayed.<anonymous closure> (third_party/dart/sdk/lib/async/future.dart:440:42)
+#2      Timer._createTimer.<anonymous closure> (third_party/dart/sdk/lib/_internal/vm/lib/timer_patch.dart:18:15)
+#3      _Timer._runTimers (third_party/dart/sdk/lib/_internal/vm/lib/timer_impl.dart:423:19)
+#4      _Timer._handleMessage (third_party/dart/sdk/lib/_internal/vm/lib/timer_impl.dart:454:5)
+#5      _RawReceivePort._handleMessage (third_party/dart/sdk/lib/_internal/vm/lib/isolate_patch.dart:192:12)
+
+Uncaught error: Null check operator used on a null value
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+pid: 2912, tid: 129266021339208, name 1.ui
+os: android arch: arm64 comp: yes sim: no
+build_id: 'b718850940a6ab861ab806427ac43cab'
+isolate_dso_base: 758d1e660000, vm_dso_base: 758d1e660000
+isolate_instructions: 758d1e746a80, vm_instructions: 758d1e730000
+#0      checkout (/Users/mac/juju/examples/flutter/lib/main.dart:56:77)
+#1      scenarios.<anonymous closure>.<anonymous closure> (/Users/mac/juju/examples/flutter/lib/main.dart:66:34)
+#2      _rootRun (third_party/dart/sdk/lib/async/zone_root.dart:27:47)

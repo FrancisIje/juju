@@ -1,0 +1,26 @@
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+pid: 2912, tid: 129266021339208, name 1.ui
+os: android arch: arm64 comp: yes sim: no
+build_id: 'b718850940a6ab861ab806427ac43cab'
+isolate_dso_base: 758d1e660000, vm_dso_base: 758d1e660000
+isolate_instructions: 758d1e746a80, vm_instructions: 758d1e730000
+    #00 abs 0000758d1e802ff7 virt 00000000001a2ff7 _kDartIsolateSnapshotInstructions+0xbc577
+    #01 abs 0000758d1e96e2db virt 000000000030e2db _kDartIsolateSnapshotInstructions+0x22785b
+    #02 abs 0000758d1e7b978b virt 000000000015978b _kDartIsolateSnapshotInstructions+0x72d0b
+    #03 abs 0000758d1e95bbb3 virt 00000000002fbbb3 _kDartIsolateSnapshotInstructions+0x215133
+    #04 abs 0000758d1e75c4d7 virt 00000000000fc4d7 _kDartIsolateSnapshotInstructions+0x15a57
+    #05 abs 0000758d1e75c45f virt 00000000000fc45f _kDartIsolateSnapshotInstructions+0x159df
+    #06 abs 0000758d1e990803 virt 0000000000330803 _kDartIsolateSnapshotInstructions+0x249d83
+    #07 abs 0000758d1e75c227 virt 00000000000fc227 _kDartIsolateSnapshotInstructions+0x157a7
+
+Uncaught error: Null check operator used on a null value
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+pid: 2912, tid: 129266021339208, name 1.ui
+os: android arch: arm64 comp: yes sim: no
+build_id: 'b718850940a6ab861ab806427ac43cab'
+isolate_dso_base: 758d1e660000, vm_dso_base: 758d1e660000
+isolate_instructions: 758d1e746a80, vm_instructions: 758d1e730000
+    #00 abs 0000758d1e802dd7 virt 00000000001a2dd7 _kDartIsolateSnapshotInstructions+0xbc357
+    #01 abs 0000758d1e802d4f virt 00000000001a2d4f _kDartIsolateSnapshotInstructions+0xbc2cf
+    #02 abs 0000758d1e95a213 virt 00000000002fa213 _kDartIsolateSnapshotInstructions+0x213793
+    #03 abs 0000758d1e74c05f virt 00000000000ec05f _kDartIsolateSnapshotInstructions+0x55df

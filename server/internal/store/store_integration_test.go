@@ -213,6 +213,37 @@ func TestProjectKeys(t *testing.T) {
 	}
 }
 
+func TestDebugFiles(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	if _, err := s.FindDebugFile(ctx, p.ID, "sourcemap", "web@1", "app.min.js"); err != store.ErrNotFound {
+		t.Fatalf("before upload: err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.SaveDebugFile(ctx, p.ID, store.DebugFile{Kind: "sourcemap", Release: "web@1", Name: "app.min.js", SHA256: "aaa", Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// Uploading the same name again for the release replaces it.
+	if _, err := s.SaveDebugFile(ctx, p.ID, store.DebugFile{Kind: "sourcemap", Release: "web@1", Name: "app.min.js", SHA256: "bbb", Size: 2}); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := s.FindDebugFile(ctx, p.ID, "sourcemap", "web@1", "app.min.js")
+	if err != nil || sum != "bbb" {
+		t.Fatalf("sum = %q, err = %v; want the newer upload", sum, err)
+	}
+	if _, err := s.FindDebugFile(ctx, p.ID, "sourcemap", "web@2", "app.min.js"); err != store.ErrNotFound {
+		t.Fatal("another release must not see this map")
+	}
+	files, _ := s.ListDebugFiles(ctx, p.ID, "")
+	if len(files) != 1 {
+		t.Fatalf("listed %d files, want 1", len(files))
+	}
+	// Another project can't see it.
+	other, _ := s.CreateProject(ctx, "org-"+t.Name(), "other")
+	if _, err := s.FindDebugFile(ctx, other.ID, "sourcemap", "web@1", "app.min.js"); err != store.ErrNotFound {
+		t.Fatal("debug files must be per project")
+	}
+}
+
 // Up, down, up proves the down migration really works, so a bad deploy can
 // be rolled back. Runs last-ish by name but resets to "up" either way.
 func TestMigrationsRoundTrip(t *testing.T) {

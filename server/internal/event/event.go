@@ -51,11 +51,12 @@ type Event struct {
 	User        *User             `json:"user,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 
-	SDK        SDK       `json:"sdk"`
-	ReceivedAt time.Time `json:"received_at"`
-	Repairs    []string  `json:"repairs,omitempty"` // what Normalize changed, kept for debugging SDKs
-	ProjectID  int64     `json:"-"`
-	Time       time.Time `json:"-"` // parsed Timestamp
+	SDK           SDK            `json:"sdk"`
+	ReceivedAt    time.Time      `json:"received_at"`
+	Symbolication *Symbolication `json:"symbolication,omitempty"`
+	Repairs       []string       `json:"repairs,omitempty"` // what Normalize changed, kept for debugging SDKs
+	ProjectID     int64          `json:"-"`
+	Time          time.Time      `json:"-"` // parsed Timestamp
 }
 
 type Exception struct {
@@ -76,6 +77,23 @@ type Frame struct {
 	Lineno   int    `json:"lineno,omitempty"`
 	Colno    int    `json:"colno,omitempty"`
 	InApp    bool   `json:"in_app"`
+	// Raw is the frame as the SDK sent it (minified or obfuscated), kept
+	// when symbolication replaced it, so nothing the app sent is lost.
+	Raw *RawFrame `json:"raw,omitempty"`
+}
+
+type RawFrame struct {
+	Function string `json:"function,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Lineno   int    `json:"lineno,omitempty"`
+	Colno    int    `json:"colno,omitempty"`
+}
+
+// Symbolication records what the server did to the stack trace, and why
+// when it couldn't: the first thing to check when frames still look minified.
+type Symbolication struct {
+	Status string   `json:"status"` // "symbolicated", "partial", "missing", "failed"
+	Notes  []string `json:"notes,omitempty"`
 }
 
 type Breadcrumb struct {

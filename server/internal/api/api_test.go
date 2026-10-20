@@ -15,6 +15,23 @@ import (
 
 type fakeStore struct {
 	gotLimit int
+	files    []store.DebugFile
+}
+
+func (f *fakeStore) SaveDebugFile(_ context.Context, _ int64, d store.DebugFile) (store.DebugFile, error) {
+	d.ID = int64(len(f.files) + 1)
+	f.files = append(f.files, d)
+	return d, nil
+}
+
+func (f *fakeStore) ListDebugFiles(_ context.Context, _ int64, release string) ([]store.DebugFile, error) {
+	var out []store.DebugFile
+	for _, d := range f.files {
+		if release == "" || d.Release == release {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ProjectSecretHash(_ context.Context, id int64) ([]byte, error) {

@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-rn-deps flutter-test
+.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -44,7 +44,10 @@ sdk: ## Install, type-check, test and build the JavaScript SDKs
 sdk-test: ## Run the JavaScript SDK tests
 	cd sdks && npm test
 
-example-web: ## Serve the web example at http://localhost:5173/examples/web/ (run `make sdk` first)
+example-web-build: ## Minify the web example's app.js with a source map, like a production build
+	sdks/node_modules/.bin/esbuild examples/web/app.js --bundle --minify --sourcemap --target=es2020 --outfile=examples/web/dist/app.min.js
+
+example-web: ## Serve the web example at http://127.0.0.1:5173/examples/web/ (run `make sdk` and `make example-web-build` first)
 	python3 -m http.server 5173 --bind 127.0.0.1
 
 example-rn-deps: ## Build and pack the SDKs, then install them into examples/react-native

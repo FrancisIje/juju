@@ -62,6 +62,20 @@ void main() => Juju.runZoned(() async {
 Catches framework errors (`FlutterError.onError`), async errors (`PlatformDispatcher.onError`) and zone errors,
 and keeps unsent events in a file so they survive the app being killed. Example app: [examples/flutter](examples/flutter).
 
+## Symbolication
+
+Upload debug files after each release build, so stack traces show your original source:
+
+```bash
+export JUJU_URL=https://juju.example.com JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_...
+juju upload -kind sourcemap -release web@2.3.1 dist/            # web: *.map next to your bundles
+juju upload -kind sourcemap -release shop@1.4.0+12 index.android.bundle.map   # React Native
+juju upload -kind dart_symbols build/symbols/                   # Flutter --split-debug-info
+```
+
+The release must match what the SDK sends. Dart symbols are matched by build id. If frames still look
+minified, the event's `symbolication.notes` say what's missing.
+
 ## Tests
 
 ```bash
@@ -86,7 +100,9 @@ server/
   internal/queue/      buffered channel between ingest and workers
   internal/worker/     fingerprint + store, with retries
   internal/store/      all SQL
-  internal/api/        read endpoints (secret key)
+  internal/api/        read endpoints and debug file uploads (secret key)
+  internal/symbolicate source maps and Dart DWARF back to source, before fingerprinting
+  internal/blob/       uploaded files on disk, named by their SHA-256
   internal/db/         connection pool + embedded migrations
 sdks/
   js-core/             @juju/core: events, stack parsing, queue, batching, retry

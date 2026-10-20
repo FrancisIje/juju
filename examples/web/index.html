@@ -45,6 +45,8 @@
 
 <!-- The built SDK: `npm run build` in sdks/ creates this file. It defines a global `juju`. -->
 <script src="../../sdks/web/dist/juju.min.js"></script>
-<script src="app.js"></script>
+<!-- The app minified with a source map, like a production build (`make example-web-build`).
+     Upload dist/app.min.js.map with `juju upload` to see the original source in stack traces. -->
+<script src="dist/app.min.js"></script>
 </body>
 </html>

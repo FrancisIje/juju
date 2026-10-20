@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"juju/internal/blob"
 	"juju/internal/httpx"
 	"juju/internal/store"
 )
@@ -26,11 +27,15 @@ type Store interface {
 	ProjectSecretHash(ctx context.Context, projectID int64) ([]byte, error)
 	ListIssues(ctx context.Context, projectID int64, limit int) ([]store.Issue, error)
 	ListIssueEvents(ctx context.Context, projectID, issueID int64, limit int) ([]json.RawMessage, error)
+	SaveDebugFile(ctx context.Context, projectID int64, f store.DebugFile) (store.DebugFile, error)
+	ListDebugFiles(ctx context.Context, projectID int64, release string) ([]store.DebugFile, error)
 }
 
 type API struct {
-	Store Store
-	Log   *slog.Logger
+	Store     Store
+	Blobs     *blob.Store
+	MaxUpload int64 // bytes
+	Log       *slog.Logger
 }
 
 const (
@@ -43,6 +48,8 @@ const (
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/issues", a.authed(a.listIssues))
 	mux.HandleFunc("GET /api/v1/projects/{id}/issues/{issue_id}/events", a.authed(a.listIssueEvents))
+	mux.HandleFunc("POST /api/v1/projects/{id}/files", a.authed(a.uploadFile))
+	mux.HandleFunc("GET /api/v1/projects/{id}/files", a.authed(a.listFiles))
 }
 
 type projectHandler func(w http.ResponseWriter, r *http.Request, projectID int64)

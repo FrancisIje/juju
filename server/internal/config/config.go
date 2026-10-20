@@ -19,6 +19,8 @@ type Config struct {
 	QueueSize   int        // JUJU_QUEUE_SIZE, buffered channel capacity between ingest and workers
 	Workers     int        // JUJU_WORKERS, number of worker goroutines draining the queue
 	LogLevel    slog.Level // JUJU_LOG_LEVEL, debug | info | warn | error
+	DataDir     string     // JUJU_DATA_DIR, where uploaded debug files are kept
+	MaxUploadMB int        // JUJU_MAX_UPLOAD_MB, largest debug file accepted
 }
 
 const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=disable"
@@ -29,12 +31,17 @@ func Load() (Config, error) {
 	c := Config{
 		Addr:        getenv("JUJU_ADDR", ":8080"),
 		DatabaseURL: getenv("JUJU_DATABASE_URL", DefaultDatabaseURL),
+		DataDir:     getenv("JUJU_DATA_DIR", "data"),
 	}
 	var err error
 	if c.QueueSize, err = getint("JUJU_QUEUE_SIZE", 10_000); err != nil {
 		return c, err
 	}
 	if c.Workers, err = getint("JUJU_WORKERS", 2); err != nil {
+		return c, err
+	}
+	// Flutter symbol files for a large app can be well over 100 MB.
+	if c.MaxUploadMB, err = getint("JUJU_MAX_UPLOAD_MB", 512); err != nil {
 		return c, err
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(getenv("JUJU_LOG_LEVEL", "info"))); err != nil {

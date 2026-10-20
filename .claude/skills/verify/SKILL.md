@@ -25,6 +25,7 @@ The user is learning with this project. In every step, say **why** a test or che
 | `sdks/flutter/**` | Flutter SDK (Dart) | `flutter test` (+ `fake_async`) |
 | `dashboard/**` | Dashboard UI | `vitest` + manual check in a browser |
 | `server/migrations/**` | Database schema | migrate up, then down, then up again |
+| `server/internal/symbolicate/**` | Source maps, Dart DWARF | `go test` against real fixtures in `testdata/` |
 
 - Write down the **behaviour** that changed in one sentence, for example: "Errors with the same normalized stack trace now group into one issue." You will test that sentence, not the lines of code.
 
@@ -55,6 +56,12 @@ Write the test that would have caught the bug, or that proves the feature works.
 - Test stack trace parsing with real Dart traces saved in `test/fixtures/`, including non-symbolic ones. Generate real ones instead of typing them: `dart run` gives a symbolic trace; `dart compile exe --extra-gen-snapshot-options=--dwarf-stack-traces` gives a non-symbolic one.
 - Install hooks on `PlatformDispatcher.instance`, not `binding.platformDispatcher`: flutter_test's `TestPlatformDispatcher` silently ignores writes to `onError`.
 - Timers: use `fake_async`, and `clock.now()` (package:clock) instead of `DateTime.now()` so it can be faked.
+
+### Symbolication
+- Test against **real** files, never hand-written ones: an esbuild-minified bundle with its map, and Dart debug files (Mach-O from `dart compile aot-snapshot`, ELF from a Flutter Android build). `testdata/README.md` says how each was made.
+- For Dart, the answer key is Dart's own decoder: `dart run native_stack_traces:decode translate -d <debug file> -i <trace>`. Our frames must match it exactly (functions, files, lines, columns, inlined frames, hidden artificial frames).
+- Normal inputs hide off-by-one bugs (a source map segment spans a whole token; most return addresses sit mid-line). Test the edges on purpose: a map whose adjacent columns map to different lines, and an address where a new line starts.
+- Workers share parsed files: run with `-race` and a concurrent test.
 
 ### Migrations
 - Run up → down → up on a fresh database. Why: it proves the down migration really works, so a bad deploy can be rolled back.
@@ -125,6 +132,12 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 - Open the dashboard or the API and check that the issue appears with the correct **stack frames** (file, line, function), **release**, **environment**, **device/os context**, and **breadcrumbs** leading up to the error.
 - Go offline, throw, then come back online. The event should arrive once, not zero times and not twice.
 - For Flutter and React Native, test a **release build** at least once. Debug builds behave differently: no obfuscation, no minification, a different error zone.
+
+### Symbolication changes
+- Use one project and send errors **before** uploading anything: frames stay minified and `payload->'symbolication'` names exactly what's missing.
+- Upload with the CLI: `juju upload -kind sourcemap -release <the SDK's release> <dir>` (web: `make example-web-build` then `examples/web/dist`; React Native Android: `android/app/build/generated/sourcemaps/react/release/index.android.bundle.map`) or `juju upload -kind dart_symbols build/symbols` (Flutter: `flutter build apk --release --obfuscate --split-debug-info=build/symbols`).
+- Wait 30 s (the "not uploaded" answer is cached that long) and send again: status `symbolicated`, real file:line, `raw` holds the original frame, in_app correct (node_modules, Dart SDK and Flutter frames are not app code).
+- Grouping must survive a new build: change the code above the bug (lines shift, new minified names or build id), upload the new build's file, and check the error joins the **same** issue.
 
 ### Dashboard changes
 - Open the page and click through the changed flow with real ingested data, not an empty database. Check both light and dark mode, and a narrow window.

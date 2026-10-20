@@ -3,6 +3,7 @@
 //	juju serve                              run ingest, API and workers
 //	juju migrate up|down|status             manage the database schema
 //	juju project create -org acme -name web create a project and print its keys
+//	juju upload -kind sourcemap -release R dir/  upload debug files for symbolication
 package main
 
 import (
@@ -25,7 +26,8 @@ import (
 const usage = `usage:
   juju serve [-migrate=true]
   juju migrate up|down|status
-  juju project create -org NAME -name NAME`
+  juju project create -org NAME -name NAME
+  juju upload -kind sourcemap|dart_symbols [-release R] PATH...`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -37,6 +39,10 @@ func main() {
 func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New(usage)
+	}
+	// upload talks to a server over HTTP; it needs no database settings.
+	if args[0] == "upload" {
+		return upload(args[1:])
 	}
 	cfg, err := config.Load()
 	if err != nil {
