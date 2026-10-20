@@ -184,7 +184,7 @@ func createUser(ctx context.Context, cfg config.Config, args []string) error {
 	if err := db.Migrate(ctx, pool, "up"); err != nil {
 		return err
 	}
-	u, err := store.New(pool).CreateUser(ctx, auth.NormalizeEmail(*email), *name, hash, *org)
+	u, err := store.New(pool).CreateUser(ctx, auth.NormalizeEmail(*email), *name, hash, *org, store.JoinOrCreate)
 	if err != nil {
 		return err
 	}

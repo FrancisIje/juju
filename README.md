@@ -31,9 +31,11 @@ make dashboard      # build the UI and embed it in the server binary
 make dev            # then open http://localhost:8080
 ```
 
-The first visit creates the owner account and an organization. After that, set
-`JUJU_ALLOW_SIGNUP=true` to let others sign up, or add people from the shell with
-`go run ./cmd/juju user create -email ada@example.com -org Acme`. New projects show their
+The first visit creates the owner account and an organization. After that, sign-up is closed and
+the login page tells people to ask for an account. Add them to your organization from the shell with
+`go run ./cmd/juju user create -email ada@example.com -org Acme` (on a VPS: `juju-admin user create …`),
+or set `JUJU_ALLOW_SIGNUP=true` to open `/signup` to everyone. Self sign-up always creates a new
+organization; it can never join an existing one by name. New projects show their
 DSN and setup code for each SDK; the secret key is shown once.
 
 - Keyboard first: `⌘K` jumps anywhere, `j`/`k` move, `r`/`i`/`u` resolve, ignore, unresolve, `?` lists the rest.

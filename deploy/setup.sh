@@ -44,6 +44,9 @@ JUJU_ADDR=127.0.0.1:8080
 JUJU_DATABASE_URL=postgres://juju@/juju?host=/var/run/postgresql
 JUJU_DATA_DIR=/var/lib/juju
 JUJU_PUBLIC_URL=https://$DOMAIN
+# Let anyone create an account (each gets their own organization). Off by
+# default: add people with  juju-admin user create -email ... -org ...
+#JUJU_ALLOW_SIGNUP=true
 # Email alerts: fill these in, then run: systemctl restart juju
 #JUJU_SMTP_ADDR=smtp.example.com:587
 #JUJU_SMTP_USER=

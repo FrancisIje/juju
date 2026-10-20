@@ -32,9 +32,25 @@ func (s *Store) CountUsers(ctx context.Context) (int64, error) {
 	return n, err
 }
 
+// OrgChoice says what CreateUser does when the organization name exists.
+type OrgChoice int
+
+const (
+	// NewOrganization fails with ErrOrgTaken if the name exists. Public
+	// sign-up must use this: joining by name would let anyone who guesses
+	// "Acme" become an owner of Acme and read all its projects.
+	NewOrganization OrgChoice = iota
+	// JoinOrCreate adds the user to an existing organization of that name.
+	// Only for admins (the `juju user create` command).
+	JoinOrCreate
+)
+
+// ErrOrgTaken: sign-up named an organization that already exists.
+var ErrOrgTaken = errors.New("organization name taken")
+
 // CreateUser makes a user and, if org is set, makes them owner of that
-// organization (creating it if needed).
-func (s *Store) CreateUser(ctx context.Context, email, name, passwordHash, org string) (User, error) {
+// organization; choice says whether an existing one may be joined.
+func (s *Store) CreateUser(ctx context.Context, email, name, passwordHash, org string, choice OrgChoice) (User, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return User{}, err
@@ -53,10 +69,15 @@ func (s *Store) CreateUser(ctx context.Context, email, name, passwordHash, org s
 	}
 	if org != "" {
 		var orgID int64
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO organizations (name) VALUES ($1)
-			ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-			RETURNING id`, org).Scan(&orgID); err != nil {
+		q := `INSERT INTO organizations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id`
+		if choice == JoinOrCreate {
+			q = `INSERT INTO organizations (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`
+		}
+		err := tx.QueryRow(ctx, q, org).Scan(&orgID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrOrgTaken // the user row rolls back too
+		}
+		if err != nil {
 			return User{}, err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO memberships (user_id, organization_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING`, u.ID, orgID); err != nil {

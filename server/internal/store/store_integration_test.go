@@ -386,7 +386,7 @@ func TestSearchIssues(t *testing.T) {
 func TestMembershipIsolatesProjects(t *testing.T) {
 	s, p := newProject(t)
 	ctx := context.Background()
-	u, err := s.CreateUser(ctx, strings.ToLower(t.Name())+"@example.com", "Ada", "hash", "org-"+t.Name())
+	u, err := s.CreateUser(ctx, strings.ToLower(t.Name())+"@example.com", "Ada", "hash", "org-"+t.Name(), store.JoinOrCreate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,8 +397,27 @@ func TestMembershipIsolatesProjects(t *testing.T) {
 	if _, err := s.MemberRole(ctx, u.ID, other.ID); err != store.ErrNotFound {
 		t.Fatalf("someone else's project: err = %v, want ErrNotFound", err)
 	}
-	if _, err := s.CreateUser(ctx, strings.ToLower(t.Name())+"@example.com", "", "h", ""); err != store.ErrConflict {
+	if _, err := s.CreateUser(ctx, strings.ToLower(t.Name())+"@example.com", "", "h", "", store.NewOrganization); err != store.ErrConflict {
 		t.Fatalf("duplicate email: %v", err)
+	}
+}
+
+// Sign-up must never join an organization by typing its name: that would
+// make a stranger an owner of someone else's projects.
+func TestNewOrganizationRefusesATakenName(t *testing.T) {
+	s, p := newProject(t) // creates the organization "org-<test name>"
+	ctx := context.Background()
+	email := strings.ToLower(t.Name()) + "@example.com"
+	if _, err := s.CreateUser(ctx, email, "Eve", "hash", "org-"+t.Name(), store.NewOrganization); err != store.ErrOrgTaken {
+		t.Fatalf("err = %v, want ErrOrgTaken", err)
+	}
+	// Nothing half-made: the same email can sign up with another name.
+	u, err := s.CreateUser(ctx, email, "Eve", "hash", "eves-"+t.Name(), store.NewOrganization)
+	if err != nil {
+		t.Fatalf("retry with a free name: %v", err)
+	}
+	if _, err := s.MemberRole(ctx, u.ID, p.ID); err != store.ErrNotFound {
+		t.Fatalf("Eve reached the other organization's project: %v", err)
 	}
 }
 

@@ -9,6 +9,9 @@ import { Login } from "./pages/Login";
 import { NewProject } from "./pages/NewProject";
 import { Settings, type SettingsTab } from "./pages/Settings";
 
+/** The pages you can open without being logged in. */
+const authPage = (path: string) => path === "/login" || path === "/signup";
+
 const settingsTabs: SettingsTab[] = ["setup", "keys", "alerts", "files"];
 
 export function App() {
@@ -34,9 +37,9 @@ export function App() {
     setUnauthorizedHandler(() => {
       setMe(null);
       const back = location.pathname + location.search;
-      if (location.pathname !== "/login") navigate(`/login${back !== "/" ? `?next=${encodeURIComponent(back)}` : ""}`, { replace: true });
+      if (!authPage(location.pathname)) navigate(`/login${back !== "/" ? `?next=${encodeURIComponent(back)}` : ""}`, { replace: true });
     });
-    if (location.pathname !== "/login") void reloadMe();
+    if (!authPage(location.pathname)) void reloadMe();
   }, [reloadMe]);
 
   const toast = useCallback((m: string) => {
@@ -55,9 +58,10 @@ export function App() {
     else if (me.organizations[0]) navigate(`/new?org=${me.organizations[0].id}`, { replace: true });
   }, [me, path, first]);
 
-  if (path === "/login") {
+  if (authPage(path)) {
     return (
       <Login
+        page={path === "/signup" ? "signup" : "login"}
         onDone={async () => {
           await reloadMe();
           const next = query.get("next");

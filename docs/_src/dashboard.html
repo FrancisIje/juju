@@ -168,6 +168,8 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <div class="block">
       <h3>Logins, not keys</h3>
       <p>SDKs use the public key and scripts use the secret key, but people log in. Passwords are hashed with bcrypt. A session is an <code>HttpOnly</code>, <code>SameSite=Lax</code> cookie, and the server stores only a SHA-256 hash of its token, so a database leak doesn't hand out sessions. Every request that changes something must carry an <code>X-Juju-CSRF</code> header. Another site can make your browser send the cookie, but it can't add a custom header, so this blocks cross-site requests. Repeated failed logins are slowed down. Asking for a project you're not a member of returns "not found", so nobody can probe which projects exist.</p>
+      <p>The first visit creates the owner. After that, sign-up is closed: the login page links to a page that says who to ask, and an admin adds people with <code>juju-admin user create</code>. With <code>JUJU_ALLOW_SIGNUP=true</code>, <code>/signup</code> is open, and each new account gets its own organization.</p>
+      <div class="why"><span class="label">Why sign-up can't join an organization by name</span>An early version created the organization if it was new and joined it if not. With sign-up open, anyone who typed "Acme" would have become an owner of Acme and could read its projects and keys. Sign-up now refuses a taken name, and only the admin command can add someone to an existing organization. A test signs up as "acme" and expects a refusal.</div>
     </div>
     <div class="block">
       <h3>Alerts that can't slow ingest</h3>
@@ -258,7 +260,7 @@ JUJU_SMTP_ADDR=smtp.example.com:587 JUJU_SMTP_USER=… JUJU_SMTP_PASSWORD=… JU
     <h2>Not covered yet</h2>
     <ul>
       <li><strong>Real Slack and real email.</strong> Slack was tested with a local fake that logs what it receives, and email with a fake SMTP server in Go tests. Neither has been sent to a real workspace or inbox yet.</li>
-      <li><strong>Inviting teammates.</strong> There's no invite screen. Add people with <code>juju user create</code>, or turn on sign-up.</li>
+      <li><strong>Inviting teammates.</strong> There's no invite screen yet, so joining someone's organization takes the admin command (<code>juju-admin user create -org …</code>). Open sign-up gives each person their own organization.</li>
       <li><strong>Browsers.</strong> Checked in Chrome only. Firefox and Safari aren't tested for the dashboard yet.</li>
       <li><strong>Alert rules</strong> are two switches, new issues and regressions, per project. There are no filters by environment or volume yet.</li>
       <li><strong>Search</strong> matches text in the title and location only.</li>

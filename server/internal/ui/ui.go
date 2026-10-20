@@ -133,9 +133,13 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "hash password", err)
 		return
 	}
-	u, err := a.Store.CreateUser(r.Context(), email, strings.TrimSpace(req.Name), hash, org)
+	u, err := a.Store.CreateUser(r.Context(), email, strings.TrimSpace(req.Name), hash, org, store.NewOrganization)
 	if errors.Is(err, store.ErrConflict) {
 		httpx.WriteError(w, http.StatusConflict, "an account with this email already exists; log in instead")
+		return
+	}
+	if errors.Is(err, store.ErrOrgTaken) {
+		httpx.WriteError(w, http.StatusConflict, "an organization with this name already exists; choose another name, or ask its owner to add you")
 		return
 	}
 	if err != nil {

@@ -322,7 +322,7 @@ func TestDashboardFlowEndToEnd(t *testing.T) {
 		t.Fatalf("second sign-up: %d, want 403 (closed)", code)
 	}
 	hash, _ := auth.HashPassword("another long password")
-	if _, err := st.CreateUser(context.Background(), "bob@example.com", "Bob", hash, "bobs-org"); err != nil {
+	if _, err := st.CreateUser(context.Background(), "bob@example.com", "Bob", hash, "bobs-org", store.JoinOrCreate); err != nil {
 		t.Fatal(err)
 	}
 	if code := bob.do("POST", "/api/ui/auth/login", map[string]string{"email": "bob@example.com", "password": "another long password"}, true, nil); code != 200 {
@@ -337,6 +337,23 @@ func TestDashboardFlowEndToEnd(t *testing.T) {
 	// Not even "something changed" leaks to non-members.
 	if code := bob.do("GET", fmt.Sprintf("/api/ui/projects/%d/live", proj.ID), nil, false, nil); code != 404 {
 		t.Fatalf("bob watching ada's project: %d, want 404", code)
+	}
+
+	// With sign-up open, a stranger can't join Ada's organization by naming
+	// it: that would make them an owner of every project in it.
+	openCfg := config.Config{PublicURL: "http://juju.test", AllowSignup: true}
+	openSrv := httptest.NewServer(server.Routes(server.Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: notifier, Live: hub, Config: openCfg, Log: log}))
+	defer openSrv.Close()
+	eve := newClient(t, openSrv.URL)
+	var resp map[string]string
+	if code := eve.do("POST", "/api/ui/auth/signup", map[string]string{"email": "eve@example.com", "password": "a long enough password", "organization": "acme"}, true, &resp); code != 409 || !strings.Contains(resp["error"], "already exists") {
+		t.Fatalf("sign-up into Ada's org: %d %v, want 409", code, resp)
+	}
+	if code := eve.do("POST", "/api/ui/auth/signup", map[string]string{"email": "eve@example.com", "password": "a long enough password", "organization": "eve-co"}, true, nil); code != 201 {
+		t.Fatalf("sign-up with her own org: %d", code)
+	}
+	if code := eve.do("GET", fmt.Sprintf("/api/ui/projects/%d/issues", proj.ID), nil, false, nil); code != 404 {
+		t.Fatalf("eve reading ada's project: %d, want 404", code)
 	}
 
 	// Logging out ends the session.
