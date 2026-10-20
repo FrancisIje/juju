@@ -1,0 +1,310 @@
+<title>juju Symbolication</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column; the before/after frame viewer at the top shows real frames from the verification runs, the rest explains how each platform gets there. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #b45309;
+  --accent-soft: #fdf1e3;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #f59e0b; --accent-soft: #2a1f0f; --ok: #4ade80; --ok-soft: #12261a; --info: #7aa2ff;
+    --code-bg: #1d242d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #f59e0b; --accent-soft: #2a1f0f; --ok: #4ade80; --ok-soft: #12261a; --info: #7aa2ff;
+  --code-bg: #1d242d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section, .block { display: grid; gap: 16px; }
+section { gap: 22px; }
+.block { gap: 10px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-x: auto; white-space: nowrap; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+pre.code .hl { color: var(--accent); font-weight: 600; }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+/* before/after viewer */
+.viewer { display: grid; gap: 14px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { font: inherit; font-size: 0.9rem; padding: 6px 14px; border: 0; background: var(--bg); color: var(--fg); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.frames { list-style: none; margin: 0; padding: 0; font-family: var(--f-mono); font-size: 0.8rem; display: grid; min-width: 480px; }
+.frames li { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 4.5rem; gap: 12px; padding: 8px 6px; border-bottom: 1px dashed var(--line); align-items: baseline; }
+.frames li:last-child { border-bottom: 0; }
+.frames .fn { overflow-wrap: anywhere; }
+.frames .file { color: var(--muted); overflow-wrap: anywhere; }
+.frames .tag { font-size: 0.7rem; justify-self: end; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.frames .tag.app { color: var(--ok); }
+.frames .tag.lib { color: var(--muted); }
+.frames.raw .fn { color: var(--accent); }
+.status { font-family: var(--f-mono); font-size: 0.82rem; padding: 8px 12px; border-radius: 6px; background: var(--code-bg); color: var(--muted); overflow-wrap: anywhere; }
+.status.ok { background: var(--ok-soft); color: var(--ok); }
+
+.ret { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 0 14px; font-family: var(--f-mono); font-size: 0.8rem; }
+.ret div { padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.ret .addr { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ret .call { color: var(--accent); font-weight: 600; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix .mono { font-family: var(--f-mono); font-size: 0.8rem; color: var(--accent); }
+.fix p { font-size: 0.93rem; }
+footer { color: var(--muted); font-size: 0.9rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Phase 5 · Symbolication</span>
+    <h1>From <code>u app.min.js:2:713</code> to <code>checkout app.js:44</code></h1>
+    <p class="lede">Production apps ship minified JavaScript and obfuscated Dart, so their stack traces point at compressed code, or at bare addresses. Symbolication turns those frames back into the files, lines and functions you wrote, using debug files uploaded at build time.</p>
+    <div class="logline">[phase 5] <b>DONE</b> verified="minified web build, obfuscated Flutter Android release, React Native Android release (Hermes)" grouping="stable across rebuilds"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">Before and after</span>
+    <h2>Real frames from the verification runs</h2>
+    <div class="panel viewer">
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Platform">
+          <button type="button" id="p-web" data-platform="web" aria-pressed="true">Web</button>
+          <button type="button" id="p-flutter" data-platform="flutter" aria-pressed="false">Flutter</button>
+          <button type="button" id="p-rn" data-platform="rn" aria-pressed="false">React Native</button>
+        </div>
+        <div class="seg" role="group" aria-label="View">
+          <button type="button" id="v-raw" data-view="raw" aria-pressed="false">As the app sent it</button>
+          <button type="button" id="v-sym" data-view="sym" aria-pressed="true">After juju</button>
+        </div>
+      </div>
+      <p class="note" id="viewer-context">Chrome, minified with esbuild. The error: Cannot read properties of undefined (reading 'amount').</p>
+      <ol class="frames" id="frames" aria-live="polite"></ol>
+      <div class="status ok" id="viewer-status">symbolication: symbolicated</div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">The pipeline</span>
+    <h2>Upload at build time, symbolicate before grouping</h2>
+    <div class="panel">
+<pre class="mermaid">
+flowchart LR
+  B[Release build] -->|juju upload| U[Upload API<br/>secret key]
+  U --> D[(debug_files<br/>+ files on disk)]
+  A[App in production] -->|minified event| I[Ingest] --> Q[Queue] --> W[Worker]
+  W --> S[Symbolicate]
+  D -.-> S
+  S --> F[Fingerprint] --> P[(Issues)]
+</pre>
+    </div>
+    <div class="why"><span class="label">Why before fingerprinting</span>Minified names and bundle hashes change on every deploy, so a fingerprint built from them would open new issues for the same bug each release. Real names and files stay the same. In the verification, a rebuild that moved the bug from line 44 to line 50 (web) and from 56 to 59 with a new build id (Flutter) still added to the existing issues.</div>
+    <div class="why"><span class="label">Never lose an event</span>If a file is missing or a lookup fails, the original frames are kept and the event's <code>symbolication.notes</code> say why, for example "no source map uploaded for "app.min.js" in release "example@0.1.0"". Every rewritten frame keeps the original in <code>raw</code>.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">JavaScript</span>
+    <h2>Source maps: web and React Native</h2>
+    <p>A source map records, for each position in the minified file, the original file and position it came from. Frames are matched to uploaded maps by release and bundle file name (<code>app.min.js</code>, <code>index.android.bundle</code>).</p>
+    <div class="block">
+      <h3>Columns are counted differently</h3>
+      <p>Browsers and Hermes report columns starting at 1; source maps count from 0. Off by one usually still lands inside the same token, which hides the bug, so a test uses a map where neighbouring columns come from different lines.</p>
+    </div>
+    <div class="block">
+      <h3>Function names take two tricks</h3>
+      <p>A source map maps positions, not "which function am I in". juju recovers the name in two ways:</p>
+      <ol>
+        <li><strong>The caller's call site.</strong> The frame below is paused on the call into this function, and the map's original identifier there is the function's real name (<code>cartTotal</code> in <code>cartTotal(cart)</code>).</li>
+        <li><strong>The original source.</strong> When the caller is native code (like <code>Array.map</code>), read the original file upward, counting braces, to the enclosing <code>function</code> or <code>const name = () =&gt;</code>.</li>
+      </ol>
+    </div>
+    <p>React Native release builds run Hermes bytecode, where a frame's "column" is a bytecode offset (<code>1:436611</code>). The release build's composed source map translates those too. Once frames point at real files, <code>node_modules</code> code is no longer counted as app code.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Dart</span>
+    <h2>DWARF: Flutter's obfuscated builds</h2>
+    <p>With <code>--split-debug-info</code>, Flutter prints <code>build_id</code> and addresses like <code>_kDartIsolateSnapshotInstructions+0xbc357</code>. The saved symbols file holds DWARF, the standard format that maps machine-code addresses to functions and lines. It's ELF for Android and Mach-O for iOS; Go's standard library reads both.</p>
+    <div class="block">
+      <h3>Return addresses point after the call</h3>
+      <p>Every frame except the top one holds the address execution will return to: the instruction <em>after</em> the call. When the call ends a line, that address already belongs to the next line. Looking up address − 1 lands on the call itself.</p>
+      <div class="panel">
+        <div class="ret">
+          <div class="addr">0x101cb</div><div class="call">line 173: the code just before, where address − 1 lands (for a real return address, the call)</div>
+          <div class="addr">0x101cc</div><div>line 163: where a new line's code starts</div>
+        </div>
+      </div>
+      <p class="note">A line boundary in the real macOS debug file, used by the test suite: it treats 0x101cc as a return address and expects line 173. With the −1 removed, the test fails with "return address 0x101cc: line 163, want the call's line 173".</p>
+    </div>
+    <div class="block">
+      <h3>Matching Dart's own decoder</h3>
+      <ul>
+        <li><strong>Inlined functions</strong> share one address, so one raw frame can become several. <code>CartPage.build</code> was inlined into <code>checkout</code> in the test build.</li>
+        <li><strong>Compiler helpers</strong> (closure call stubs, a function "inlined into itself") are marked artificial in DWARF and hidden.</li>
+        <li><strong>Exact output.</strong> For two real debug files, macOS and an obfuscated Flutter Android build, juju's frames match <code>package:native_stack_traces</code> frame for frame.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Upload after each release build</h2>
+<pre class="code">export JUJU_URL=https://juju.example.com JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_...
+
+<span class="c"># web: the *.map files next to your bundles</span>
+juju upload -kind sourcemap -release <span class="hl">web@2.3.1</span> dist/
+
+<span class="c"># React Native (Android): the composed Hermes map from the release build</span>
+juju upload -kind sourcemap -release <span class="hl">shop@1.4.0+12</span> \
+  android/app/build/generated/sourcemaps/react/release/index.android.bundle.map
+
+<span class="c"># Flutter: flutter build apk --release --obfuscate --split-debug-info=build/symbols</span>
+juju upload -kind dart_symbols build/symbols/</pre>
+    <ul>
+      <li><strong>The release must match</strong> what the SDK sends. Dart symbols are matched by build id instead, which the server reads from the file.</li>
+      <li><strong>The secret key is required</strong>: these files contain your source code.</li>
+      <li><strong>Upload before the release ships.</strong> Events that arrive before their file aren't reprocessed later.</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked</h2>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>Platform and build</th><th>Before upload</th><th>After upload</th></tr></thead>
+        <tbody>
+          <tr><td>Web, minified (Chrome)</td><td class="mono">u app.min.js:2:713, note names the missing map</td><td class="mono">checkout app.js:44:78</td></tr>
+          <tr><td>Flutter, obfuscated Android release</td><td class="mono">+0xbc357 addresses, note names build id b718850940…</td><td class="mono">checkout main.dart:56:77, all frames, status symbolicated</td></tr>
+          <tr><td>React Native, Android release (Hermes)</td><td class="mono">index.android.bundle:1:436611</td><td class="mono">rejection App.tsx:43:29; Babel helpers not app code</td></tr>
+          <tr><td>Grouping after a rebuild</td><td colspan="2" class="mono">web line 44→50, Flutter 56→59 with a new build id: same issues, counts 1→2</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>What real files exposed</h3>
+    <div class="fixes">
+      <div class="fix"><span class="mono">tests that couldn't fail</span><p>Breaking the column conversion or the −1 rule left the tests passing. New tests now target those edges.</p></div>
+      <div class="fix"><span class="mono">lines missing on Android</span><p>The Android file's line table is out of address order, and a reused line reader gave up. Shared between workers, it was also a data race.</p></div>
+      <div class="fix"><span class="mono">raw helper frames</span><p>Addresses made only of compiler helpers stayed raw with a misleading note. Now they're hidden, as Dart's decoder does.</p></div>
+      <div class="fix"><span class="mono">SDK frames as app code</span><p>Dart's debug info names files by path (<code>third_party/dart/sdk/…</code>), not <code>dart:</code>. The app-code check now knows those paths.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>Not covered yet</h2>
+    <ul>
+      <li><strong>Reprocessing.</strong> Events received before their debug file stay as they arrived.</li>
+      <li><strong>React Native on iOS</strong> needs the source map written during the Xcode build (<code>SOURCEMAP_FILE</code>), so the iOS/Android split for the same bug is only fixed on Android.</li>
+      <li><strong>Obfuscated exception types.</strong> Dart core types stay readable, but your own exception classes need the obfuscation map uploaded too.</li>
+      <li><strong>Very large symbol files</strong> are read fully into memory: fine at 2 MB, untested past 100 MB.</li>
+    </ul>
+  </section>
+
+  <footer>Part of the juju project docs. See the <a href="https://francisije.github.io/juju/">roadmap</a> and the <a href="https://francisije.github.io/juju/web-sdk.html">web</a>, <a href="https://francisije.github.io/juju/react-native-sdk.html">React Native</a> and <a href="https://francisije.github.io/juju/flutter-sdk.html">Flutter</a> SDK pages.</footer>
+</div>
+
+<script>
+(function () {
+  // Real frames from the verification runs (top frames shown).
+  var data = {
+    web: {
+      context: "Chrome, minified with esbuild. The error: Cannot read properties of undefined (reading 'amount').",
+      raw: [["u", "app.min.js:2:713", true], ["(anonymous)", "app.min.js:2:806", true]],
+      sym: [["checkout", "app.js:44:78", true], ["(anonymous arrow)", "app.js:51:22", true]],
+      rawStatus: 'symbolication: missing · no source map uploaded for "app.min.js" in release "example@0.1.0"',
+      symStatus: "symbolication: symbolicated"
+    },
+    flutter: {
+      context: "Android emulator, flutter build apk --release --obfuscate --split-debug-info. The error: Null check operator used on a null value.",
+      raw: [["_kDartIsolateSnapshotInstructions+0xbc357", "<non-symbolic>", true], ["_kDartIsolateSnapshotInstructions+0x10fbaf", "<non-symbolic>", true], ["_kDartIsolateSnapshotInstructions+0x1818d7", "<non-symbolic>", true], ["_kDartIsolateSnapshotInstructions+0x235433", "<non-symbolic>", true]],
+      sym: [["checkout", "main.dart:56:77", true], ["BrokenCartPage.build", "main.dart:175:85", true], ["StatelessElement.build", "framework.dart:5889:49", false], ["ComponentElement.performRebuild", "framework.dart:5817:15", false]],
+      rawStatus: "symbolication: missing · no Dart symbols uploaded for build id b718850940a6ab861ab806427ac43cab",
+      symStatus: "symbolication: symbolicated"
+    },
+    rn: {
+      context: "Android emulator, React Native 0.87 release build (Hermes). The error: Checkout API failed: 503.",
+      raw: [["rejection", "index.android.bundle:1:436611", true], ["?anon_0_", "index.android.bundle:1:654180", true], ["asyncGeneratorStep", "index.android.bundle:1:408138", true]],
+      sym: [["rejection", "App.tsx:43:29", true], ["App", "App.tsx:80:28", true], ["asyncGeneratorStep", "node_modules/@babel/…/asyncToGenerator.js:3:17", false]],
+      rawStatus: "every frame points into one bundle, so all of them look like app code",
+      symStatus: "symbolication: symbolicated"
+    }
+  };
+  var state = { platform: "web", view: "sym" };
+  var list = document.getElementById("frames");
+  var status = document.getElementById("viewer-status");
+  var context = document.getElementById("viewer-context");
+
+  function render() {
+    var d = data[state.platform];
+    var frames = state.view === "raw" ? d.raw : d.sym;
+    list.replaceChildren();
+    list.className = "frames" + (state.view === "raw" ? " raw" : "");
+    frames.forEach(function (f) {
+      var li = document.createElement("li");
+      var fn = document.createElement("span"); fn.className = "fn"; fn.textContent = f[0];
+      var file = document.createElement("span"); file.className = "file"; file.textContent = f[1];
+      var tag = document.createElement("span"); tag.className = "tag " + (f[2] ? "app" : "lib"); tag.textContent = f[2] ? "app" : "library";
+      li.append(fn, file, tag);
+      list.append(li);
+    });
+    status.textContent = state.view === "raw" ? d.rawStatus : d.symStatus;
+    status.className = "status" + (state.view === "sym" ? " ok" : "");
+    context.textContent = d.context;
+    document.querySelectorAll("[data-platform]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.platform === state.platform)); });
+    document.querySelectorAll("[data-view]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.view === state.view)); });
+  }
+  document.querySelectorAll("[data-platform]").forEach(function (b) { b.addEventListener("click", function () { state.platform = b.dataset.platform; render(); }); });
+  document.querySelectorAll("[data-view]").forEach(function (b) { b.addEventListener("click", function () { state.view = b.dataset.view; render(); }); });
+  render();
+})();
+</script>

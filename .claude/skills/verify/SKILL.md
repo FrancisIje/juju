@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Write tests for and manually verify any change in the juju codebase (Go server, web / React Native / Flutter SDKs, dashboard). Use after implementing a feature or fix, before calling it done, or when the user says "verify", "test this", or "check it works".
+description: Write tests for and manually verify any change in the juju codebase (Go server, web / React Native / Flutter SDKs, dashboard), then document key changes as a published docs page (artifact). Use after implementing a feature or fix, before calling it done, or when the user says "verify", "test this", or "check it works".
 ---
 
 # Verify a juju change
@@ -144,7 +144,50 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 
 If you cannot run something (no simulator, Docker not running), say exactly what wasn't verified and why. Never claim it works.
 
-## Step 5: Report back
+## Step 5: Document key changes as an artifact
+
+A **key change** gets a docs page: a finished roadmap phase, a new SDK or platform, a new server
+capability (an endpoint, a pipeline stage), or a change to how something core works (event format,
+grouping, delivery guarantees). Bug fixes, refactors and small tweaks don't get their own page; if
+they change something an existing page says, update that page instead.
+
+### Create or update?
+- Pages live in `docs/_src/<name>.html`, one per subject: `roadmap.html` (front page), `web-sdk.html`,
+  `react-native-sdk.html`, `flutter-sdk.html`, `symbolication.html`, …
+- If the subject already has a page, **update it**: edit the source, then republish. In the session
+  that published it, publish the same file path again. In a later session, pass the page's existing
+  artifact URL as `url` (after reading it with `action: "read"`), so the link people already have keeps
+  working. The URLs are in Claude's memory (`juju-docs-artifacts`); `Artifact` `action: "list"` finds them too.
+- Otherwise create a new page, and add its URL to that memory file.
+- Always update `roadmap.html` as well: the phase's pill (Done / Next / Planned), the log line at the
+  top, and a link from the phase's card to the page (`https://francisije.github.io/juju/<name>.html`).
+
+### What the page contains
+Write for someone learning how juju works, using what you just verified, not what you planned:
+1. **The problem** in one or two sentences, with a real example (a real minified frame, a real crash).
+2. **How it works**: the few decisions that matter, each with its reason. One diagram or one small
+   interactive piece where it explains something text can't (a before/after toggle, a picker).
+3. **Using it**: the setup code a developer copies.
+4. **Verification**: a table of what was checked, on what (platform, build type), with the real
+   evidence (event ids, line numbers, counts). List the bugs the devices or real files exposed.
+5. **Limits**: what isn't covered yet, plainly.
+
+### How it looks
+Reuse the existing pages' system so the docs read as one set: copy the `:root` tokens (light and dark),
+fonts (Familjen Grotesk, Atkinson Hyperlegible, JetBrains Mono) and component styles (`.panel`, `.why`,
+`.fixes`, tables, `.logline`) from the most recent page. Same header pattern: eyebrow
+`juju · Phase N · <subject>`, an h1 that states the idea, a lede, and a log line. Title tag
+`juju <Subject>`; link back to the roadmap and the related pages in the footer.
+
+### Publish and build
+1. Run the Artifact tool's `quickstart` first for a new page, and follow its page contract (no
+   `<html>`/`<head>`/`<body>` tags in the source: the viewer adds them; `make docs` adds them for Pages).
+2. Publish the page with a one-word `icon` (new pages only) and a one-sentence `description`.
+3. `make docs` to rebuild the GitHub Pages copies in `docs/`, check the generated HTML is well formed,
+   and `node --check` any inline script.
+4. Commit the source, the generated page and the roadmap together.
+
+## Step 6: Report back
 
 End with a short report in this shape:
 
@@ -166,4 +209,7 @@ End with a short report in this shape:
 
 ### Concept to learn
 <one idea from this change worth understanding, e.g. "why we fingerprint on in-app frames only">
+
+### Docs
+<the artifact link, created or updated, or "no key change, no page">
 ```

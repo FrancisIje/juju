@@ -280,6 +280,7 @@ flowchart LR
           <li>The worker rewrites minified or obfuscated frames into real file, line and function before fingerprinting</li>
         </ul>
         <div class="whynow"><span class="label">Why now</span>Production stack traces are unreadable without it (<code>a.js:1:48213</code>). It also has to run before fingerprinting, or each build would group errors differently.</div>
+        <p><a href="https://francisije.github.io/juju/symbolication.html">See real frames before and after symbolication, and how it was verified →</a></p>
         <div class="done"><span class="label">Done when</span>A minified web error and an obfuscated Flutter error both show the original source location.</div>
       </article>
 
