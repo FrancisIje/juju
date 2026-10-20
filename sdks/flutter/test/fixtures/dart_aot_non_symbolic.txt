@@ -1,0 +1,12 @@
+*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+pid: 71368, tid: 6131101696, name DartWorker
+os: macos arch: arm64 comp: no sim: no
+build_id: 'b4485c2e0287804e97e466d035d1c91c'
+isolate_dso_base: 1077c8000, vm_dso_base: 1077c8000
+isolate_instructions: 1077d8000, vm_instructions: 1077cc000
+    #00 abs 000000010780cc67 virt 0000000000044c67 _kDartIsolateSnapshotInstructions+0x34c67
+    #01 abs 00000001078181ff virt 00000000000501ff _kDartIsolateSnapshotInstructions+0x401ff
+<asynchronous suspension>
+    #02 abs 000000010781812b virt 000000000005012b _kDartIsolateSnapshotInstructions+0x4012b
+<asynchronous suspension>
+

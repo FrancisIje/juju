@@ -36,6 +36,22 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  flutter:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          cache: true
+      - run: flutter pub get
+      - run: dart format --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test
+
   server:
     runs-on: ubuntu-latest
     defaults:

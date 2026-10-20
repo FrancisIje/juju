@@ -1,0 +1,8 @@
+#0      CartPage.build (package:shop/pages/cart_page.dart:88:12)
+#1      StatelessElement.build (package:flutter/src/widgets/framework.dart:5689:49)
+#2      ComponentElement.performRebuild (package:flutter/src/widgets/framework.dart:5617:15)
+#3      Element.rebuild (package:flutter/src/widgets/framework.dart:5333:7)
+#4      BuildOwner.buildScope (package:flutter/src/widgets/framework.dart:2915:19)
+#5      _rootRun (dart:async/zone.dart:1525:13)
+<asynchronous suspension>
+#6      main.<anonymous closure> (package:shop/main.dart:12:3)

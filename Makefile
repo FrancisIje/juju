@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-rn-deps
+.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-rn-deps flutter-test
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -52,3 +52,6 @@ example-rn-deps: ## Build and pack the SDKs, then install them into examples/rea
 	mkdir -p examples/react-native/vendor
 	cd sdks && npm pack -w @juju/core -w @juju/react-native --pack-destination ../examples/react-native/vendor
 	cd examples/react-native && npm install
+
+flutter-test: ## Format check, analyze and test the Flutter SDK
+	cd sdks/flutter && flutter pub get && dart format --set-exit-if-changed lib test && flutter analyze && flutter test

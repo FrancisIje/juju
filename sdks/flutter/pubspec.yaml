@@ -1,0 +1,25 @@
+name: juju_flutter
+description: "juju error tracking for Flutter: framework, async and zone errors with breadcrumbs and an offline queue."
+version: 0.1.0
+homepage: https://github.com/FrancisIje/juju
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  clock: ^1.1.2
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  path_provider: ^2.1.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  fake_async: ^1.3.3
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+

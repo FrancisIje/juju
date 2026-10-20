@@ -49,10 +49,24 @@ juju.init({ dsn: "https://pk_...@juju.example.com/1", release: "shop@1.4.0+12", 
 
 `storage` keeps unsent events on the device, so a crash is reported on the next launch. Example app: [examples/react-native](examples/react-native).
 
+## Flutter SDK
+
+```dart
+void main() => Juju.runZoned(() async {
+      WidgetsFlutterBinding.ensureInitialized();
+      await Juju.init(JujuOptions(dsn: 'https://pk_...@juju.example.com/1', release: 'shop@1.4.0+12', appPackages: {'shop'}));
+      runApp(MaterialApp(navigatorObservers: [Juju.navigatorObserver], home: const HomePage()));
+    });
+```
+
+Catches framework errors (`FlutterError.onError`), async errors (`PlatformDispatcher.onError`) and zone errors,
+and keeps unsent events in a file so they survive the app being killed. Example app: [examples/flutter](examples/flutter).
+
 ## Tests
 
 ```bash
 make sdk-test          # JavaScript SDK tests
+make flutter-test      # Flutter SDK: format, analyze, tests
 make test              # gofmt, go vet, unit tests with -race
 make test-integration  # also runs against a real (embedded) Postgres
 make fuzz              # fuzz the event parser for 30s
@@ -78,6 +92,8 @@ sdks/
   js-core/             @juju/core: events, stack parsing, queue, batching, retry
   web/                 @juju/web: browser error hooks, breadcrumbs, sendBeacon
   react-native/        @juju/react-native: crash handler, saved queue, device context
+  flutter/             juju_flutter (Dart): framework, async and zone errors, offline queue
 examples/web/          example app that triggers each kind of error
 examples/react-native/ React Native app for iOS and Android release-build checks
+examples/flutter/      Flutter app for Android release and iOS simulator checks
 ```

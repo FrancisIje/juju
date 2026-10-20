@@ -1,0 +1,7 @@
+#0      CartPage.total (file:///Users/dev/shop/bin/shop.dart:5:76)
+#1      CartPage.build (file:///Users/dev/shop/bin/shop.dart:4:27)
+#2      checkout (file:///Users/dev/shop/bin/shop.dart:10:14)
+<asynchronous suspension>
+#3      main (file:///Users/dev/shop/bin/shop.dart:15:5)
+<asynchronous suspension>
+

@@ -22,7 +22,7 @@ The user is learning with this project. In every step, say **why** a test or che
 | `server/**` | Go ingest / API / worker | `go test` |
 | `sdks/js-core/**`, `sdks/web/**` | Web SDK (TypeScript) | `vitest` |
 | `sdks/react-native/**` | React Native SDK | `vitest` (with a fake `react-native` module) |
-| `sdks/flutter/**` | Flutter SDK (Dart) | `flutter test` |
+| `sdks/flutter/**` | Flutter SDK (Dart) | `flutter test` (+ `fake_async`) |
 | `dashboard/**` | Dashboard UI | `vitest` + manual check in a browser |
 | `server/migrations/**` | Database schema | migrate up, then down, then up again |
 
@@ -50,9 +50,11 @@ Write the test that would have caught the bug, or that proves the feature works.
 - React Native: fake `ErrorUtils` and assert that the previous handler still gets called. Why: we must never swallow the app's own crash behaviour. For fatal errors, also assert it's called only after the queue is saved, and within the timeout if storage hangs.
 
 ### Dart (Flutter SDK)
-- `flutter test`: cover `FlutterError.onError`, `PlatformDispatcher.instance.onError`, and errors inside `runZonedGuarded`.
+- `flutter test`: cover `FlutterError.onError`, `PlatformDispatcher.instance.onError`, and errors inside `Juju.runZoned` (a `runZonedGuarded`).
 - Assert that the original `FlutterError.onError` is still called (same reason as for React Native).
-- Test stack trace parsing with real Dart traces saved in `test/fixtures/`, including obfuscated ones.
+- Test stack trace parsing with real Dart traces saved in `test/fixtures/`, including non-symbolic ones. Generate real ones instead of typing them: `dart run` gives a symbolic trace; `dart compile exe --extra-gen-snapshot-options=--dwarf-stack-traces` gives a non-symbolic one.
+- Install hooks on `PlatformDispatcher.instance`, not `binding.platformDispatcher`: flutter_test's `TestPlatformDispatcher` silently ignores writes to `onError`.
+- Timers: use `fake_async`, and `clock.now()` (package:clock) instead of `DateTime.now()` so it can be faked.
 
 ### Migrations
 - Run up → down → up on a fresh database. Why: it proves the down migration really works, so a bad deploy can be rolled back.
@@ -113,6 +115,11 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
   - Build **release** builds. iOS: `xcodebuild -workspace ios/JujuExample.xcworkspace -scheme JujuExample -configuration Release -sdk iphonesimulator -derivedDataPath ios/build`, then `xcrun simctl install`/`launch`. Android: `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ANDROID_HOME=~/Library/Android/sdk ./gradlew assembleRelease`, then boot `emulator -avd Pixel_10_Pro -no-window`, `adb reverse tcp:8080 tcp:8080` and `tcp:8098`, `adb install -r`.
   - Gradle doesn't notice SDK changes inside `node_modules`: force the JS step with `./gradlew :app:createBundleReleaseJsAndAssets --rerun :app:assembleRelease`, and check the APK's timestamp. A "successful" build that didn't rebuild proves nothing.
   - Drive scenarios with the control file (`config.json` on port 8098): `nonfatal`, then the **crash test**: stop the juju server, launch with `crash` (the process must die; iOS writes a `.ips` report in `~/Library/Logs/DiagnosticReports`, Android logs `FATAL EXCEPTION`), start the server, relaunch with `none`. The crash must arrive exactly once, with the same `event_id` that was saved.
+- Flutter (`examples/flutter`, uses the SDK by path):
+  - **Release mode only runs on the Android emulator**: Flutter has no release mode on the iOS simulator. `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" flutter build apk --release`, then `adb install -r build/app/outputs/flutter-apk/app-release.apk`. iOS: `flutter build ios --simulator --debug`, then `xcrun simctl install`/`launch`.
+  - Same control file as React Native; scenario `all` triggers framework, async (root zone), zone and handled errors. Each event must carry its `tags.mechanism` (`flutter_error`, `platform_dispatcher`, `zone`, `manual`).
+  - Release builds need `<uses-permission android:name="android.permission.INTERNET"/>` in `android/app/src/main/AndroidManifest.xml`; the template only adds it to debug and profile, so a release app silently has no network.
+  - Offline test: stop the server, launch with `all`, wait for `[juju] send failed` in logcat, `adb shell am force-stop`, start the server, relaunch with `none`. Expect `[juju] restored N event(s)` and N new events, all distinct ids. On iOS, the queue file is readable at `<app data container>/Library/Application Support/juju_queue.json`.
   - iOS lets you read the saved queue directly: `xcrun simctl get_app_container <sim> <bundle id> data`, then `Library/Application Support/<bundle id>/RCTAsyncLocalStorage_V1/manifest.json`, key `@juju/queue`. Android release builds aren't debuggable, so relaunching is the proof there.
 - Tap or click the "Throw error" / "Unhandled promise" / "Native crash" buttons.
 - Open the dashboard or the API and check that the issue appears with the correct **stack frames** (file, line, function), **release**, **environment**, **device/os context**, and **breadcrumbs** leading up to the error.
