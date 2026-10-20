@@ -23,8 +23,11 @@ type Config struct {
 	MaxUploadMB int        // JUJU_MAX_UPLOAD_MB, largest debug file accepted
 	// JUJU_PUBLIC_URL, how people and SDKs reach this server. Used in DSNs,
 	// alert links, and to decide whether cookies need https.
-	PublicURL   string
-	AllowSignup bool // JUJU_ALLOW_SIGNUP, let anyone create an account (the first account is always allowed)
+	PublicURL string
+	// JUJU_ALLOW_SIGNUP: anyone can create an account and their own
+	// organization (on by default). Set it to false for a private server,
+	// where people join only through invite links.
+	AllowSignup bool
 	// JUJU_ALLOW_HTTP_WEBHOOKS lets alerts post to http:// URLs. Only for
 	// local testing: see alert.ValidateWebhookURL.
 	AllowHTTPWebhooks bool
@@ -44,7 +47,7 @@ func Load() (Config, error) {
 		DatabaseURL:       getenv("JUJU_DATABASE_URL", DefaultDatabaseURL),
 		DataDir:           getenv("JUJU_DATA_DIR", "data"),
 		PublicURL:         strings.TrimRight(getenv("JUJU_PUBLIC_URL", "http://localhost:8080"), "/"),
-		AllowSignup:       getenv("JUJU_ALLOW_SIGNUP", "") == "true",
+		AllowSignup:       !isOff(getenv("JUJU_ALLOW_SIGNUP", "true")),
 		AllowHTTPWebhooks: getenv("JUJU_ALLOW_HTTP_WEBHOOKS", "") == "true",
 		SMTPAddr:          getenv("JUJU_SMTP_ADDR", ""),
 		SMTPUser:          getenv("JUJU_SMTP_USER", ""),
@@ -88,4 +91,14 @@ func getint(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s: %q is not a number", key, v)
 	}
 	return n, nil
+}
+
+// isOff reads a switch that's on by default: only a clear "off" turns it
+// off, so a typo can't close something by accident.
+func isOff(v string) bool {
+	switch strings.ToLower(v) {
+	case "false", "0", "no", "off":
+		return true
+	}
+	return false
 }

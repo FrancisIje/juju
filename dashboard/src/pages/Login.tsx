@@ -57,7 +57,7 @@ export function Login({ page, onDone }: { page: "login" | "signup"; onDone: () =
                 {first
                   ? "You're the first person on this server, so you'll own it. You can add teammates later."
                   : signingUp
-                    ? "You'll get your own organization, where you can create projects."
+                    ? "You'll get your own organization, where you can create projects. Joining a team? Open the invite link they sent you instead."
                     : "Errors from your apps, grouped, with the line that caused them."}
               </p>
             </div>
@@ -115,7 +115,7 @@ export function Login({ page, onDone }: { page: "login" | "signup"; onDone: () =
               <>
                 No account?{" "}
                 <Link className="link" to="/signup">
-                  How to get one
+                  How to join
                 </Link>
               </>
             )}
@@ -130,19 +130,14 @@ export function Login({ page, onDone }: { page: "login" | "signup"; onDone: () =
   );
 }
 
-// Sign-up is off (the default after the first account), so say who can add
-// people and how, instead of showing a form that can only fail.
+// Only on a private server, where whoever runs it turned sign-up off
+// (JUJU_ALLOW_SIGNUP=false). Say how to get in, in words a visitor can act
+// on: no server commands, which they couldn't run anyway.
 function SignupClosed() {
   return (
     <div style={{ display: "grid", gap: "var(--space-3)" }}>
-      <h1>Ask for an account</h1>
-      <p className="muted">This juju server doesn't allow sign-up. Ask the person who runs it to add you. They can do it from the server's shell:</p>
-      <pre className="code" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-        juju-admin user create -email you@example.com -org Acme
-      </pre>
-      <p className="faint" style={{ fontSize: "var(--text-xs)" }}>
-        Or they can open sign-up for everyone by setting JUJU_ALLOW_SIGNUP=true.
-      </p>
+      <h1>Join with an invite</h1>
+      <p className="muted">This juju server is private, so new accounts come from invite links. Ask someone on the team you're joining to send you one from Settings → Team, then open it.</p>
     </div>
   );
 }

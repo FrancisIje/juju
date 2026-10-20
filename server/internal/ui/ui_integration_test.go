@@ -417,7 +417,7 @@ func TestInvites(t *testing.T) {
 	if code := bob.do("GET", "/api/ui/invites/"+token, nil, false, &info); code != 200 || info["organization"] != "team-org" || info["invited_by"] != "ada@team.test" {
 		t.Fatalf("invite info: %d %v", code, info)
 	}
-	// Sign-up is closed on this server, but the invite lets him in, into
+	// This test server is private (sign-up off), but the invite lets him in, into
 	// team-org (no organization of his own), as a member.
 	signup := map[string]string{"email": "bob@team.test", "name": "Bob", "password": "another long password", "invite": token}
 	if code := bob.do("POST", "/api/ui/auth/signup", signup, true, nil); code != 201 {

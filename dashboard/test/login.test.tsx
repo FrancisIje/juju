@@ -14,13 +14,15 @@ test("login links to sign-up when it's open", async () => {
 test("with sign-up closed, login still says how to get an account", async () => {
   fakeServer(setup(false, false));
   const { unmount } = render(<Login page="login" onDone={() => {}} />);
-  expect((await screen.findByRole("link", { name: "How to get one" })).getAttribute("href")).toBe("/signup");
+  expect((await screen.findByRole("link", { name: "How to join" })).getAttribute("href")).toBe("/signup");
   unmount();
 
-  // /signup explains who to ask, instead of a form that can only fail.
+  // /signup explains how to get in, instead of a form that can only fail,
+  // and without server commands a visitor couldn't run.
   render(<Login page="signup" onDone={() => {}} />);
-  expect(await screen.findByRole("heading", { name: "Ask for an account" })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Join with an invite" })).toBeTruthy();
   expect(screen.queryByLabelText("Password")).toBeNull();
+  expect(document.body.textContent).not.toMatch(/juju-admin|JUJU_ALLOW_SIGNUP/);
   expect(screen.getByRole("link", { name: "Log in" })).toBeTruthy();
 });
 

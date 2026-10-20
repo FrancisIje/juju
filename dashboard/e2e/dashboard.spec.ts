@@ -170,8 +170,7 @@ test("first run → project → error → resolve → regression alert → invit
     await expect(page.locator("table.table")).toContainText("regression");
   }
 
-  // Invite a teammate. Sign-up is closed now (Ada was the first account),
-  // so the invite link is the only way in.
+  // Invite a teammate into Acme.
   await page.goto(page.url().replace(/\/p\/(\d+)\/.*$/, "/p/$1/settings/team"));
   await page.getByRole("button", { name: "Create invite link" }).click();
   const link = (await page.locator(".banner.ok pre.code").textContent())!;
@@ -201,6 +200,34 @@ test("first run → project → error → resolve → regression alert → invit
   await page.reload();
   await expect(page.getByRole("row", { name: /Bob.*Member/ })).toBeVisible();
   await bobContext.close();
+
+  // Someone new, not invited, makes their own account and organization:
+  // sign-up is open by default.
+  const dana = await (await browser.newContext()).newPage();
+  await dana.goto("/login");
+  await dana.getByRole("link", { name: "Create an account" }).click();
+  await expect(dana).toHaveURL(/\/signup$/);
+  await expect(dana.getByRole("heading", { name: "Create an account" })).toBeVisible();
+  await dana.getByLabel("Your name").fill("Dana");
+  await dana.getByLabel("Email").fill("dana@example.com");
+  await dana.getByLabel("Password").fill("dana's long password");
+  // Naming someone else's organization doesn't get you into it.
+  await dana.getByLabel("Organization").fill("Acme");
+  await dana.getByRole("button", { name: "Create account" }).click();
+  await expect(dana.getByRole("alert")).toContainText("already exists");
+  await dana.getByLabel("Organization").fill("Dana Co");
+  await dana.getByRole("button", { name: "Create account" }).click();
+  await expect(dana.getByRole("heading", { name: "New project" })).toBeVisible();
+  await dana.getByLabel("Project name").fill("dana-app");
+  await dana.getByRole("button", { name: "Create project" }).click();
+  await expect(dana.getByText("Copy it now: it's shown only this once")).toBeVisible();
+  const danaDsn = (await dana.locator("pre.code").nth(1).textContent())!;
+  expect(danaDsn).not.toBe(dsn); // her own project, her own key
+  // Her account sees only her organization.
+  const danaMe = await dana.evaluate(() => fetch("/api/ui/me").then((r) => r.json()));
+  expect(danaMe.organizations.map((o: { name: string }) => o.name)).toEqual(["Dana Co"]);
+  await dana.goto(page.url().replace(/settings\/team$/, "issues"));
+  await expect(dana.getByText("Page not found").or(dana.getByText("project not found"))).toBeVisible();
 
   expect(errors).toEqual([]);
 });

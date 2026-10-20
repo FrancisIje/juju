@@ -28,7 +28,7 @@ type API struct {
 	Alerts      *alert.Notifier
 	Live        *live.Hub // optional: without it, /live answers 404 and the dashboard polls
 	PublicURL   string    // used to build DSNs, e.g. https://juju.example.com
-	AllowSignup bool      // after the first user, can anyone sign up?
+	AllowSignup bool      // can anyone create an account and organization? (the first account always can)
 	Log         *slog.Logger
 }
 
@@ -117,7 +117,7 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > 0 && !a.AllowSignup && req.Invite == "" {
-		httpx.WriteError(w, http.StatusForbidden, "sign-up is closed on this server; ask an owner for an account")
+		httpx.WriteError(w, http.StatusForbidden, "sign-up is turned off on this server; to join a team, open the invite link they sent you")
 		return
 	}
 	email := auth.NormalizeEmail(req.Email)
