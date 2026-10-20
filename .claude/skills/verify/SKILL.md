@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Write tests for and manually verify any change in the juju codebase (Go server, web / React Native / Flutter SDKs, dashboard), then document key changes as a published docs page (artifact). Use after implementing a feature or fix, before calling it done, or when the user says "verify", "test this", or "check it works".
+description: Write tests for and manually verify any change in the juju codebase (Go server, web / React Native / Flutter SDKs, dashboard), then document key changes as a published docs page (artifact) and open a pull request from a new branch to main. Use after implementing a feature or fix, before calling it done, or when the user says "verify", "test this", or "check it works".
 ---
 
 # Verify a juju change
@@ -11,6 +11,11 @@ A change is done only when it passes **two kinds of proof**:
 2. **A manual run.** Real data goes through the real running system, so we know it works end to end. Tests only show that code does what we *think* it should. The manual run shows it does what the *user* needs.
 
 The user is learning with this project. In every step, say **why** a test or check exists, not only what it does.
+
+Two rules for every change:
+
+- **Every fix is verified manually, before and after.** Reproduce the bug in the running system and record what goes wrong; fix it; rebuild; run the *same* steps again and record that it's gone (Step 4, "Bug fixes"). A passing test alone doesn't close a fix: a test can pass for the wrong reason, and only the before/after run shows the fix changed what the user sees. This applies to each fix, including the small ones found along the way.
+- **Finished work goes out as a pull request** from a new branch to `main` (Step 6), never as a push to `main`. The user reviews and merges.
 
 ## Step 1: Work out what changed
 
@@ -169,6 +174,15 @@ The look follows fal.ai's product UI, with juju's own identity (no fal.ai logo, 
 - **Works at 390 px**: no horizontal page scroll (wide tables and tab rows scroll inside their box), and the important text wraps instead of being cut. Measure it, don't eyeball it: the e2e `shoot()` checks that neither the document nor `.main` (the app's own scroll area, which hides overflow from a document-only check) is wider than the screen. Long single-line content (DSNs, invite links) in a grid needs `min-width: 0` on its container.
 - Secrets: the secret key is shown once and kept only in memory (`lib/secrets.ts`), never in browser storage. The webhook URL is never sent back to the browser.
 
+### Bug fixes: before and after
+For every fix, including small ones found while testing something else:
+1. **Reproduce it first**, against the running system with the bug still in, using the steps a user would take (a Playwright script for the dashboard, curl for the API). Write down what you observed: the wrong output, status code, screenshot, or measurement.
+2. **Find the real cause** before fixing. If a first guess doesn't explain what you saw, keep looking: a fix for the wrong cause can still make a test pass.
+3. **Fix, then rebuild what's being run** (`make dashboard`, then rebuild the Go binary, since it embeds the UI at compile time) and confirm the new build is the one being served, e.g. the `index-<hash>.js` name in `curl localhost:8080/`.
+4. **Run the same steps again** and record that the behaviour is now right. Keep the script: it usually becomes a test.
+5. **Check the test guards the fix**: put the bug back (a mutation) and confirm the test fails, then restore it.
+If you can't reproduce a reported bug, say so and say what you tried; don't call it fixed. If it only happens somewhere you can't reach (the user's server, a device you don't have), say exactly that and how the user can confirm.
+
 If you cannot run something (no simulator, Docker not running), say exactly what wasn't verified and why. Never claim it works.
 
 ## Step 5: Document key changes as an artifact
@@ -214,7 +228,19 @@ fonts (Familjen Grotesk, Atkinson Hyperlegible, JetBrains Mono) and component st
    and `node --check` any inline script.
 4. Commit the source, the generated page and the roadmap together.
 
-## Step 6: Report back
+## Step 6: Open a pull request
+
+When the checks pass and every fix has its before/after run, ship the work as a pull request. Why: `main` is what deploys and what others build on, so changes reach it only after a review, with CI run on exactly what will merge.
+
+1. **Look at what you're about to commit**: `git status`, then `git diff`. Commit only this change's files: not unrelated edits, generated build output (`server/internal/web/dist/` assets, `dashboard/dist/`, `.build/`), or anything secret (`sk_` keys, `.env` files, webhook URLs). If another session or the user changed files you didn't touch, leave them out and mention them.
+2. **Make a new branch** named for the change: `fix/<what>` for fixes, `feat/<what>` for features (e.g. `fix/login-next-redirect`). Start it from up-to-date `main` (`git fetch origin` then `git switch -c <branch> origin/main`). If the commits were already made on local `main`, run `git switch -c <branch>` to take them along, then point local `main` back at `origin/main` with `git branch -f main origin/main`, but only when every commit on local `main` is on the new branch.
+3. **Commit** with a message that says what changed and why, in a few lines.
+4. **Push the branch**: `git push -u origin <branch>`. Never push to `main`, and never force-push.
+5. **Open the PR** to `main`: `gh pr create --base main --head <branch> --title "<short summary>" --body-file <file>`. The body follows Step 7's report: what changed and why, tests added, automated checks, **manual verification (before and after for each fix)**, and what wasn't verified.
+6. **Wait for CI** (`gh pr checks <number> --watch`). If a check fails, read the log (`gh run view --log-failed`), fix it on the same branch, push again, and say what failed. Don't merge the PR yourself; the user does that after reviewing.
+If there's no git remote, or `gh` isn't logged in (`gh auth status`), stop at the local branch and tell the user what's needed.
+
+## Step 7: Report back
 
 End with a short report in this shape:
 
@@ -239,4 +265,7 @@ End with a short report in this shape:
 
 ### Docs
 <the artifact link, created or updated, or "no key change, no page">
+
+### Pull request
+<the PR link, its branch, and CI status: passed / failed (what) / still running>
 ```
