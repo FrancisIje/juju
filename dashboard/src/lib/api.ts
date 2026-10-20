@@ -41,7 +41,10 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith("/api/ui/auth/")) onUnauthorized();
-    throw new ApiError((body as { error?: string }).error ?? `The server answered ${res.status}.`, res.status);
+    const msg = (body as { error?: string }).error;
+    // The server writes messages in lowercase, like Go errors; on screen they
+    // start a sentence.
+    throw new ApiError(msg ? msg.charAt(0).toUpperCase() + msg.slice(1) : `The server answered ${res.status}.`, res.status);
   }
   return body as T;
 }

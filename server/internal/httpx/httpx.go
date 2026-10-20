@@ -7,8 +7,13 @@ import (
 )
 
 // WriteJSON sends v as a JSON response with the given status code.
+//
+// no-store: API answers hold private data (issues, keys, teammates), and are
+// always fetched fresh. Without it a browser may keep them on disk, where the
+// next person on a shared computer could find them after logout.
 func WriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v) // an error means the client hung up; nothing useful to do
 }

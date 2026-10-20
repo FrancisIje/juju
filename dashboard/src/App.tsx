@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Shell } from "./components/Shell";
 import { api, ApiError, setUnauthorizedHandler, type Me } from "./lib/api";
 import { AppContext, type AppState } from "./lib/app";
-import { match, navigate, useLocation } from "./lib/router";
+import { match, navigate, safeNext, useLocation } from "./lib/router";
 import { Issue } from "./pages/Issue";
 import { Issues } from "./pages/Issues";
 import { InvitePage } from "./pages/InvitePage";
@@ -19,6 +19,9 @@ export function App() {
   const { path, query } = useLocation();
   const [me, setMe] = useState<Me | null>(null);
   const [failed, setFailed] = useState<ApiError | null>(null);
+  // Whether the first "who's logged in?" check has answered, so /login can
+  // wait for it instead of flashing a form at someone who's logged in.
+  const [checked, setChecked] = useState(false);
   const [message, setMessage] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -29,6 +32,8 @@ export function App() {
     } catch (err) {
       // A 401 is handled by the unauthorized handler (it goes to /login).
       if (err instanceof ApiError && err.status !== 401) setFailed(err);
+    } finally {
+      setChecked(true);
     }
   }, []);
 
@@ -40,7 +45,10 @@ export function App() {
       const back = location.pathname + location.search;
       if (!authPage(location.pathname)) navigate(`/login${back !== "/" ? `?next=${encodeURIComponent(back)}` : ""}`, { replace: true });
     });
-    if (!authPage(location.pathname)) void reloadMe();
+    // On /login and /signup too: someone already logged in is sent on to
+    // the app (below) instead of being shown a form that would swap their
+    // session for another account.
+    void reloadMe();
   }, [reloadMe]);
 
   const toast = useCallback((m: string) => {
@@ -50,6 +58,11 @@ export function App() {
   }, []);
 
   const state = useMemo<AppState | null>(() => (me ? { me, reloadMe, toast } : null), [me, reloadMe, toast]);
+
+  useEffect(() => {
+    if (me && (path === "/login" || path === "/signup")) navigate(safeNext(query.get("next")), { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, path]);
 
   // "/" and old links go to the first project, or to creating one.
   const first = me?.organizations.flatMap((o) => o.projects)[0];
@@ -75,14 +88,13 @@ export function App() {
     );
   }
   if (authPage(path)) {
+    if (!checked || me) return null; // logged in: the effect above moves on
     return (
       <Login
         page={path === "/signup" ? "signup" : "login"}
         onDone={async () => {
           await reloadMe();
-          const next = query.get("next");
-          // Only same-site paths, so a crafted link can't bounce people elsewhere.
-          navigate(next && next.startsWith("/") && !next.startsWith("//") ? next : "/", { replace: true });
+          navigate(safeNext(query.get("next")), { replace: true });
         }}
       />
     );

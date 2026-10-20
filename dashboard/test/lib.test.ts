@@ -2,7 +2,7 @@ import { filterCommands, type Command } from "../src/components/CommandPalette";
 import { flatten } from "../src/components/issue/Context";
 import type { Frame } from "../src/lib/api";
 import { groupFrames, location, splitTitle } from "../src/lib/frames";
-import { match } from "../src/lib/router";
+import { match, safeNext } from "../src/lib/router";
 import { snippet } from "../src/lib/snippets";
 import { bytes, compact, relative } from "../src/lib/time";
 
@@ -88,4 +88,14 @@ test("curl snippet is built from the DSN", () => {
   const { code } = snippet("curl", "http://pk_abc@localhost:8080/7");
   expect(code).toContain('"http://localhost:8080/api/v1/projects/7/events"');
   expect(code).toContain("X-Juju-Key: pk_abc");
+});
+
+test("after login, ?next= only ever leads to a page on this site", () => {
+  const o = "https://juju.example.com";
+  expect(safeNext("/p/3/issues?status=all", o)).toBe("/p/3/issues?status=all");
+  expect(safeNext(null, o)).toBe("/");
+  // Each of these is read by browsers as another site.
+  for (const bad of ["//evil.example", "/\\evil.example", "https://evil.example/p/1", "\\\\evil.example", "javascript:alert(1)"]) {
+    expect(safeNext(bad, o), bad).toBe("/");
+  }
 });

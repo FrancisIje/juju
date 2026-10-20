@@ -27,6 +27,22 @@ export function useLocation(): { path: string; query: URLSearchParams } {
   return { path: path ?? "/", query: new URLSearchParams(search) };
 }
 
+/**
+ * Where to go after logging in, from ?next=. Only a path on this site:
+ * checking the text ("starts with /") isn't enough, because browsers read
+ * "/\\evil.com" as "//evil.com", another site. So resolve it the way the
+ * browser will and compare origins.
+ */
+export function safeNext(next: string | null, origin = location.origin): string {
+  if (!next) return "/";
+  try {
+    const u = new URL(next, origin);
+    return u.origin === origin ? u.pathname + u.search + u.hash : "/";
+  } catch {
+    return "/";
+  }
+}
+
 /** match("/p/:project/issues/:issue", "/p/3/issues/42") → { project: "3", issue: "42" } */
 export function match(pattern: string, path: string): Record<string, string> | null {
   const p = pattern.split("/").filter(Boolean);

@@ -13,7 +13,7 @@ test("a 401 calls the unauthorized handler, except on auth endpoints", async () 
   setUnauthorizedHandler(onAuth);
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "log in first" }), { status: 401 })));
 
-  await expect(api("/api/ui/me")).rejects.toMatchObject({ status: 401, message: "log in first" });
+  await expect(api("/api/ui/me")).rejects.toMatchObject({ status: 401, message: "Log in first" }); // the server's "log in first", as a sentence
   expect(onAuth).toHaveBeenCalledTimes(1);
 
   // A wrong password is also a 401, but must show the error, not redirect.
