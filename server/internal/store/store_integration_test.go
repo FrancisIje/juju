@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,11 +101,16 @@ func newEvent(projectID int64, typ string, line int) *event.Event {
 
 func save(t *testing.T, s *store.Store, e *event.Event) bool {
 	t.Helper()
-	inserted, err := s.SaveEvent(context.Background(), e, fingerprint.Compute(e))
+	return saveResult(t, s, e).Inserted
+}
+
+func saveResult(t *testing.T, s *store.Store, e *event.Event) store.SaveResult {
+	t.Helper()
+	res, err := s.SaveEvent(context.Background(), e, fingerprint.Compute(e))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return inserted
+	return res
 }
 
 func issues(t *testing.T, s *store.Store, projectID int64) []store.Issue {
@@ -242,6 +248,166 @@ func TestDebugFiles(t *testing.T) {
 	if _, err := s.FindDebugFile(ctx, other.ID, "sourcemap", "web@1", "app.min.js"); err != store.ErrNotFound {
 		t.Fatal("debug files must be per project")
 	}
+}
+
+func TestNewIssueAndRegression(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	first := saveResult(t, s, newEvent(p.ID, "StateError", 88))
+	if !first.NewIssue || first.Regressed {
+		t.Fatalf("first event: %+v, want a new issue", first)
+	}
+	if again := saveResult(t, s, newEvent(p.ID, "StateError", 88)); again.NewIssue || again.Regressed {
+		t.Fatalf("second event of an open issue: %+v, want neither", again)
+	}
+	if retry := saveResult(t, s, func() *event.Event { e := newEvent(p.ID, "StateError", 88); return e }()); retry.NewIssue {
+		t.Fatal("not new")
+	}
+
+	if n, err := s.SetIssueStatus(ctx, p.ID, []int64{first.IssueID}, "resolved", 0); err != nil || n != 1 {
+		t.Fatalf("resolve: %d, %v", n, err)
+	}
+	back := saveResult(t, s, newEvent(p.ID, "StateError", 88))
+	if !back.Regressed {
+		t.Fatalf("event after resolving: %+v, want a regression", back)
+	}
+	d, err := s.IssueDetail(ctx, p.ID, first.IssueID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "unresolved" || !d.Regressed {
+		t.Errorf("status = %s regressed = %v, want unresolved and regressed", d.Status, d.Regressed)
+	}
+	// Reopening by hand is not a regression.
+	s.SetIssueStatus(ctx, p.ID, []int64{first.IssueID}, "resolved", 0)
+	s.SetIssueStatus(ctx, p.ID, []int64{first.IssueID}, "unresolved", 0)
+	if d2, _ := s.IssueDetail(ctx, p.ID, first.IssueID); d2.Regressed {
+		t.Error("a manual reopen was labelled a regression")
+	}
+	var kinds []string
+	for _, a := range d.Activity {
+		kinds = append(kinds, a.Kind)
+	}
+	if strings.Join(kinds[len(kinds)-3:], ",") != "regressed,resolved,created" {
+		t.Errorf("activity = %v", kinds)
+	}
+}
+
+// Ten workers saving events for one resolved issue at the same moment: the
+// issue must regress exactly once, or the team gets ten alerts.
+func TestRegressionHappensOnceUnderConcurrency(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	first := saveResult(t, s, newEvent(p.ID, "RaceError", 1))
+	if _, err := s.SetIssueStatus(ctx, p.ID, []int64{first.IssueID}, "resolved", 0); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	regressions := 0
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() {
+			if saveResult(t, s, newEvent(p.ID, "RaceError", 1)).Regressed {
+				mu.Lock()
+				regressions++
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
+	if regressions != 1 {
+		t.Fatalf("%d regressions, want exactly 1", regressions)
+	}
+}
+
+func TestAffectedUsersAreCountedOnce(t *testing.T) {
+	s, p := newProject(t)
+	for _, id := range []string{"u1", "u2", "u1", "", "u2"} {
+		e := newEvent(p.ID, "UserError", 1)
+		if id != "" {
+			e.User = &event.User{ID: id}
+		}
+		save(t, s, e)
+	}
+	list, _, err := s.SearchIssues(context.Background(), p.ID, store.IssueFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list[0].EventCount != 5 || list[0].UserCount != 2 {
+		t.Fatalf("events %d users %d, want 5 and 2", list[0].EventCount, list[0].UserCount)
+	}
+	if sum(list[0].Trend) != 5 || list[0].Trend[23] != 5 {
+		t.Errorf("trend = %v, want all 5 in the latest hour", list[0].Trend)
+	}
+}
+
+func TestSearchIssues(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	a := saveResult(t, s, newEvent(p.ID, "TypeError", 1))
+	saveResult(t, s, newEvent(p.ID, "RangeError", 1))
+	saveResult(t, s, newEvent(p.ID, "RangeError", 1))
+	if _, err := s.SetIssueStatus(ctx, p.ID, []int64{a.IssueID}, "ignored", 0); err != nil {
+		t.Fatal(err)
+	}
+	titles := func(f store.IssueFilter) []string {
+		f.Limit = 10
+		list, _, err := s.SearchIssues(ctx, p.ID, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, x := range list {
+			out = append(out, strings.SplitN(x.Title, ":", 2)[0])
+		}
+		return out
+	}
+	if got := titles(store.IssueFilter{Status: "unresolved"}); strings.Join(got, ",") != "RangeError" {
+		t.Errorf("unresolved = %v", got)
+	}
+	if got := titles(store.IssueFilter{Status: "ignored"}); strings.Join(got, ",") != "TypeError" {
+		t.Errorf("ignored = %v", got)
+	}
+	if got := titles(store.IssueFilter{Query: "range"}); strings.Join(got, ",") != "RangeError" {
+		t.Errorf("search = %v", got)
+	}
+	if got := titles(store.IssueFilter{Query: "%"}); len(got) != 0 {
+		t.Errorf("%% must be a literal, not a wildcard: %v", got)
+	}
+	if got := titles(store.IssueFilter{Sort: "events"}); got[0] != "RangeError" {
+		t.Errorf("sort by events = %v", got)
+	}
+	c, _ := s.CountIssues(ctx, p.ID)
+	if c.Unresolved != 1 || c.Ignored != 1 {
+		t.Errorf("counts = %+v", c)
+	}
+}
+
+func TestMembershipIsolatesProjects(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	u, err := s.CreateUser(ctx, strings.ToLower(t.Name())+"@example.com", "Ada", "hash", "org-"+t.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role, err := s.MemberRole(ctx, u.ID, p.ID); err != nil || role != "owner" {
+		t.Fatalf("own project: %q, %v", role, err)
+	}
+	other, _ := s.CreateProject(ctx, "someone-else-"+t.Name(), "theirs")
+	if _, err := s.MemberRole(ctx, u.ID, other.ID); err != store.ErrNotFound {
+		t.Fatalf("someone else's project: err = %v, want ErrNotFound", err)
+	}
+	if _, err := s.CreateUser(ctx, strings.ToLower(t.Name())+"@example.com", "", "h", ""); err != store.ErrConflict {
+		t.Fatalf("duplicate email: %v", err)
+	}
+}
+
+func sum(xs []int) int {
+	n := 0
+	for _, x := range xs {
+		n += x
+	}
+	return n
 }
 
 // Up, down, up proves the down migration really works, so a bad deploy can

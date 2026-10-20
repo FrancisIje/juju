@@ -21,6 +21,17 @@ type Config struct {
 	LogLevel    slog.Level // JUJU_LOG_LEVEL, debug | info | warn | error
 	DataDir     string     // JUJU_DATA_DIR, where uploaded debug files are kept
 	MaxUploadMB int        // JUJU_MAX_UPLOAD_MB, largest debug file accepted
+	// JUJU_PUBLIC_URL, how people and SDKs reach this server. Used in DSNs,
+	// alert links, and to decide whether cookies need https.
+	PublicURL   string
+	AllowSignup bool // JUJU_ALLOW_SIGNUP, let anyone create an account (the first account is always allowed)
+	// JUJU_ALLOW_HTTP_WEBHOOKS lets alerts post to http:// URLs. Only for
+	// local testing: see alert.ValidateWebhookURL.
+	AllowHTTPWebhooks bool
+	SMTPAddr          string // JUJU_SMTP_ADDR, host:port; empty turns email alerts off
+	SMTPUser          string // JUJU_SMTP_USER
+	SMTPPassword      string // JUJU_SMTP_PASSWORD
+	SMTPFrom          string // JUJU_SMTP_FROM
 }
 
 const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=disable"
@@ -29,9 +40,16 @@ const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=dis
 // `make devdb` / docker compose.
 func Load() (Config, error) {
 	c := Config{
-		Addr:        getenv("JUJU_ADDR", ":8080"),
-		DatabaseURL: getenv("JUJU_DATABASE_URL", DefaultDatabaseURL),
-		DataDir:     getenv("JUJU_DATA_DIR", "data"),
+		Addr:              getenv("JUJU_ADDR", ":8080"),
+		DatabaseURL:       getenv("JUJU_DATABASE_URL", DefaultDatabaseURL),
+		DataDir:           getenv("JUJU_DATA_DIR", "data"),
+		PublicURL:         strings.TrimRight(getenv("JUJU_PUBLIC_URL", "http://localhost:8080"), "/"),
+		AllowSignup:       getenv("JUJU_ALLOW_SIGNUP", "") == "true",
+		AllowHTTPWebhooks: getenv("JUJU_ALLOW_HTTP_WEBHOOKS", "") == "true",
+		SMTPAddr:          getenv("JUJU_SMTP_ADDR", ""),
+		SMTPUser:          getenv("JUJU_SMTP_USER", ""),
+		SMTPPassword:      getenv("JUJU_SMTP_PASSWORD", ""),
+		SMTPFrom:          getenv("JUJU_SMTP_FROM", "juju <alerts@localhost>"),
 	}
 	var err error
 	if c.QueueSize, err = getint("JUJU_QUEUE_SIZE", 10_000); err != nil {

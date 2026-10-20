@@ -9,3 +9,13 @@
 
 # server data (uploaded debug files) when run from the repo
 /server/data/
+
+# dashboard build output copied into the Go binary (only placeholder.html is committed)
+/server/internal/web/dist/*
+!/server/internal/web/dist/placeholder.html
+
+# dashboard
+/dashboard/node_modules/
+/dashboard/dist/
+/dashboard/test-results/
+/dashboard/playwright-report/

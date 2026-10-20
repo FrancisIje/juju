@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
 	"juju/internal/event"
 	"juju/internal/fingerprint"
+	"juju/internal/store"
 )
 
 type fakeStore struct {
@@ -19,7 +21,7 @@ type fakeStore struct {
 	calls    int
 }
 
-func (f *fakeStore) SaveEvent(_ context.Context, e *event.Event, _ fingerprint.Result) (bool, error) {
+func (f *fakeStore) SaveEvent(_ context.Context, e *event.Event, _ fingerprint.Result) (store.SaveResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -28,21 +30,21 @@ func (f *fakeStore) SaveEvent(_ context.Context, e *event.Event, _ fingerprint.R
 	}
 	if f.failures > 0 {
 		f.failures--
-		return false, errors.New("database is down")
+		return store.SaveResult{}, errors.New("database is down")
 	}
 	f.saved = append(f.saved, e.EventID)
-	return true, nil
+	return store.SaveResult{Inserted: true, IssueID: 1, NewIssue: e.EventID == "new", Regressed: e.EventID == "regressed"}, nil
 }
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-func runAll(store Store, ids ...string) {
+func runAll(s Store, ids ...string) {
 	ch := make(chan *event.Event, len(ids))
 	for _, id := range ids {
 		ch <- &event.Event{EventID: id, Exception: &event.Exception{Type: "E"}}
 	}
 	close(ch)
-	Run(context.Background(), ch, store, nil, quiet, 3)
+	Run(context.Background(), ch, Deps{Store: s, Log: quiet}, 3)
 }
 
 func TestRunDrainsEverything(t *testing.T) {
@@ -86,9 +88,9 @@ func (renamer) Symbolicate(_ context.Context, e *event.Event) {
 
 type fpStore struct{ culprit string }
 
-func (s *fpStore) SaveEvent(_ context.Context, _ *event.Event, fp fingerprint.Result) (bool, error) {
+func (s *fpStore) SaveEvent(_ context.Context, _ *event.Event, fp fingerprint.Result) (store.SaveResult, error) {
 	s.culprit = fp.Culprit
-	return true, nil
+	return store.SaveResult{Inserted: true}, nil
 }
 
 // Grouping must use the symbolicated frames. If the fingerprint were
@@ -98,8 +100,39 @@ func TestSymbolicatesBeforeFingerprinting(t *testing.T) {
 	ch <- &event.Event{Exception: &event.Exception{Type: "TypeError", Stacktrace: &event.Stacktrace{Frames: []event.Frame{{Function: "o", Filename: "app.js", InApp: true}}}}}
 	close(ch)
 	s := &fpStore{}
-	Run(context.Background(), ch, s, renamer{}, quiet, 1)
+	Run(context.Background(), ch, Deps{Store: s, Symbolicator: renamer{}, Log: quiet}, 1)
 	if s.culprit != "lineTotal (app.js)" {
 		t.Fatalf("culprit = %q: fingerprinted before symbolication", s.culprit)
+	}
+}
+
+type recordingAlerter struct {
+	mu    sync.Mutex
+	kinds []string
+}
+
+func (a *recordingAlerter) IssueEvent(e *event.Event, _ fingerprint.Result, res store.SaveResult) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch {
+	case res.Regressed:
+		a.kinds = append(a.kinds, "regressed:"+e.EventID)
+	case res.NewIssue:
+		a.kinds = append(a.kinds, "new:"+e.EventID)
+	}
+}
+
+// Only new issues and regressions are announced; an ordinary repeat of a
+// known issue must not alert anyone.
+func TestAlertsOnlyForNewIssuesAndRegressions(t *testing.T) {
+	ch := make(chan *event.Event, 3)
+	for _, id := range []string{"new", "repeat", "regressed"} {
+		ch <- &event.Event{EventID: id, Exception: &event.Exception{Type: "E"}}
+	}
+	close(ch)
+	a := &recordingAlerter{}
+	Run(context.Background(), ch, Deps{Store: &fakeStore{}, Alerter: a, Log: quiet}, 1)
+	if strings.Join(a.kinds, ",") != "new:new,regressed:regressed" {
+		t.Fatalf("alerts = %v", a.kinds)
 	}
 }

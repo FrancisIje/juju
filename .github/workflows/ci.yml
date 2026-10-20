@@ -81,3 +81,61 @@ jobs:
         run: go test -race -count=1 -tags=integration ./...
       - name: Fuzz the event parser
         run: go test ./internal/event -run='^$' -fuzz=FuzzNormalize -fuzztime=20s
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      # tsc (which also type-checks the tests), vitest, then the production build.
+      - run: npm run check
+
+  # The whole product in a real browser: Chrome → embedded dashboard → Go
+  # server → Postgres → alerts to a fake Slack. Catches breaks between the UI
+  # and the API that unit tests on either side can't see.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Cache embedded Postgres
+        uses: actions/cache@v4
+        with:
+          path: ~/.embedded-postgres-go
+          key: embedded-postgres-v17-${{ runner.os }}
+      - name: Build the dashboard into the server
+        run: make dashboard && (cd server && go build -o juju ./cmd/juju)
+      - name: Start Postgres, the server and a fake Slack
+        run: |
+          (cd server && go run ./cmd/devdb -dir /tmp/juju-db > /tmp/devdb.log 2>&1 &)
+          timeout 120 sh -c 'until grep -q "postgres ready" /tmp/devdb.log; do sleep 1; done'
+          python3 dashboard/e2e/fake-slack.py &
+          (cd server && JUJU_ALLOW_HTTP_WEBHOOKS=true JUJU_DATA_DIR=/tmp/juju-data ./juju serve > /tmp/juju.log 2>&1 &)
+          timeout 30 sh -c 'until curl -sf localhost:8080/healthz; do sleep 1; done'
+      - name: Playwright
+        working-directory: dashboard
+        run: JUJU_E2E_SLACK=http://127.0.0.1:9911/hook npm run e2e
+      - name: Server log
+        if: failure()
+        run: cat /tmp/juju.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: dashboard/test-results/

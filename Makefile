@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test
+.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test dashboard dashboard-dev dashboard-test
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -58,3 +58,14 @@ example-rn-deps: ## Build and pack the SDKs, then install them into examples/rea
 
 flutter-test: ## Format check, analyze and test the Flutter SDK
 	cd sdks/flutter && flutter pub get && dart format --set-exit-if-changed lib test && flutter analyze && flutter test
+
+dashboard: ## Build the dashboard and embed it in the server (then `make dev` serves it at :8080)
+	cd dashboard && npm ci && npm run build
+	find server/internal/web/dist -mindepth 1 ! -name placeholder.html -delete
+	cp -R dashboard/dist/. server/internal/web/dist/
+
+dashboard-dev: ## Dashboard with hot reload at http://localhost:5174 (needs `make dev` running)
+	cd dashboard && npm run dev
+
+dashboard-test: ## Type-check and unit test the dashboard
+	cd dashboard && npm run typecheck && npm test

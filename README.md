@@ -24,6 +24,27 @@ curl -X POST localhost:8080/api/v1/projects/1/events \
 curl localhost:8080/api/v1/projects/1/issues -H "Authorization: Bearer <secret_key>"
 ```
 
+## Dashboard
+
+```bash
+make dashboard      # build the UI and embed it in the server binary
+make dev            # then open http://localhost:8080
+```
+
+The first visit creates the owner account and an organization. After that, set
+`JUJU_ALLOW_SIGNUP=true` to let others sign up, or add people from the shell with
+`go run ./cmd/juju user create -email ada@example.com -org Acme`. New projects show their
+DSN and setup code for each SDK; the secret key is shown once.
+
+- Keyboard first: `⌘K` jumps anywhere, `j`/`k` move, `r`/`i`/`u` resolve, ignore, unresolve, `?` lists the rest.
+- Alerts: Settings → Alerts posts new issues and regressions to a Slack incoming webhook or email
+  (`JUJU_SMTP_ADDR`, `JUJU_SMTP_USER`, `JUJU_SMTP_PASSWORD`, `JUJU_SMTP_FROM`). Webhooks must be https and on the
+  public internet; `JUJU_ALLOW_HTTP_WEBHOOKS=true` lifts both, for a local fake Slack only.
+- Set `JUJU_PUBLIC_URL` to the address people use, so DSNs and links in alerts point to it.
+
+For UI work, `make dashboard-dev` serves the dashboard with hot reload on :5174, talking to `make dev` on
+:8080. The binary embeds the UI at compile time, so after `make dashboard`, restart `make dev` to see it.
+
 ## Web SDK
 
 ```bash
@@ -84,7 +105,10 @@ make flutter-test      # Flutter SDK: format, analyze, tests
 make test              # gofmt, go vet, unit tests with -race
 make test-integration  # also runs against a real (embedded) Postgres
 make fuzz              # fuzz the event parser for 30s
+make dashboard-test    # dashboard: type-check and unit tests
 ```
+
+Dashboard end-to-end tests (real Chrome against a fresh server): see [dashboard/e2e/README.md](dashboard/e2e/README.md).
 
 In Claude Code, run `/verify` after any change: it writes tests and checks the change by hand.
 
@@ -92,7 +116,7 @@ In Claude Code, run `/verify` after any change: it writes tests and checks the c
 
 ```
 server/
-  cmd/juju/            the binary: serve, migrate, project create
+  cmd/juju/            the binary: serve, migrate, project create, user create, upload
   cmd/devdb/           local Postgres without Docker
   internal/event/      v1 wire format, validation and repair rules
   internal/fingerprint grouping events into issues
@@ -104,6 +128,11 @@ server/
   internal/symbolicate source maps and Dart DWARF back to source, before fingerprinting
   internal/blob/       uploaded files on disk, named by their SHA-256
   internal/db/         connection pool + embedded migrations
+  internal/auth/       passwords, sessions, CSRF check, login rate limit
+  internal/ui/         /api/ui: what the dashboard calls (session cookie)
+  internal/alert/      Slack and email alerts for new issues and regressions
+  internal/web/        serves the embedded dashboard build
+dashboard/             the dashboard: React + Vite, styles in src/styles/tokens.css
 sdks/
   js-core/             @juju/core: events, stack parsing, queue, batching, retry
   web/                 @juju/web: browser error hooks, breadcrumbs, sendBeacon

@@ -1,0 +1,173 @@
+// The dashboard's only way to talk to the server. Every request:
+//  - is same-origin, so the session cookie goes along automatically;
+//  - carries the CSRF header the server requires for changes (a malicious
+//    site can't add custom headers to cross-site requests);
+//  - turns error responses into ApiError with the server's message, which
+//    is written for people and safe to show.
+
+export const CSRF_HEADER = "X-Juju-CSRF";
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+let onUnauthorized: () => void = () => {};
+/** Called when the session has ended, to send people to the login page. */
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn;
+}
+
+export async function api<T>(path: string, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+  const method = init.method ?? "GET";
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", [CSRF_HEADER]: "1" },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: init.signal,
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") throw err;
+    throw new ApiError("Can't reach the juju server. Check your connection and try again.", 0);
+  }
+  if (res.status === 204) return undefined as T;
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/api/ui/auth/")) onUnauthorized();
+    throw new ApiError((body as { error?: string }).error ?? `The server answered ${res.status}.`, res.status);
+  }
+  return body as T;
+}
+
+// Shapes returned by /api/ui. They mirror server/internal/store/dashboard.go.
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+}
+
+export interface ProjectSummary {
+  id: number;
+  name: string;
+  unresolved: number;
+}
+
+export interface Org {
+  id: number;
+  name: string;
+  role: string;
+  projects: ProjectSummary[];
+}
+
+export interface Me {
+  user: User;
+  organizations: Org[];
+}
+
+export interface ProjectInfo {
+  id: number;
+  name: string;
+  organization: string;
+  public_key: string;
+  dsn: string;
+  secret_key?: string;
+}
+
+export type Status = "unresolved" | "resolved" | "ignored";
+
+export interface Counts {
+  unresolved: number;
+  resolved: number;
+  ignored: number;
+}
+
+export interface IssueRow {
+  id: number;
+  title: string;
+  culprit: string;
+  status: Status;
+  platform: string;
+  last_release: string;
+  event_count: number;
+  user_count: number;
+  first_seen: string;
+  last_seen: string;
+  status_changed_at: string | null;
+  /** Unresolved because it happened again after being resolved. */
+  regressed: boolean;
+  trend: number[];
+}
+
+export interface Activity {
+  kind: "created" | "resolved" | "ignored" | "reopened" | "regressed";
+  user?: string;
+  release?: string;
+  created_at: string;
+}
+
+export interface IssueDetail extends IssueRow {
+  fingerprint: string;
+  environments: string[];
+  releases: string[];
+  activity: Activity[];
+}
+
+export interface Frame {
+  function?: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  in_app: boolean;
+  raw?: { function?: string; filename?: string; lineno?: number; colno?: number };
+}
+
+export interface Breadcrumb {
+  type: string;
+  message?: string;
+  timestamp?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface EventPayload {
+  event_id: string;
+  timestamp: string;
+  received_at: string;
+  platform: string;
+  release?: string;
+  environment: string;
+  exception: { type: string; message: string; stacktrace?: { frames: Frame[] } };
+  breadcrumbs?: Breadcrumb[];
+  context?: Record<string, unknown>;
+  user?: Record<string, string>;
+  tags?: Record<string, string>;
+  sdk: { name: string; version: string };
+  repairs?: string[];
+  symbolication?: { status: string; notes?: string[] };
+}
+
+export interface AlertsView {
+  slack_webhook_set: boolean;
+  slack_webhook_hint: string;
+  email_to: string[];
+  on_new_issue: boolean;
+  on_regression: boolean;
+  email_available: boolean;
+  deliveries: { id: number; issue_id: number | null; kind: string; channel: string; ok: boolean; error: string; created_at: string }[];
+}
+
+export interface DebugFile {
+  id: number;
+  kind: string;
+  release?: string;
+  name: string;
+  size: number;
+  created_at: string;
+}

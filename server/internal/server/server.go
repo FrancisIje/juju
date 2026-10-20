@@ -9,23 +9,43 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"juju/internal/alert"
 	"juju/internal/api"
+	"juju/internal/auth"
 	"juju/internal/blob"
 	"juju/internal/config"
+	"juju/internal/httpx"
 	"juju/internal/ingest"
 	"juju/internal/queue"
 	"juju/internal/store"
 	"juju/internal/symbolicate"
+	"juju/internal/ui"
+	"juju/internal/web"
 	"juju/internal/worker"
 )
 
 // Routes builds the HTTP handler. Kept separate from Run so tests can mount
 // it on an httptest.Server.
-func Routes(pool *pgxpool.Pool, st *store.Store, q queue.Queue, blobs *blob.Store, maxUpload int64, log *slog.Logger) http.Handler {
+// Deps is everything the HTTP routes use.
+type Deps struct {
+	Pool      *pgxpool.Pool
+	Store     *store.Store
+	Queue     queue.Queue
+	Blobs     *blob.Store
+	MaxUpload int64
+	Auth      *auth.Service
+	Alerts    *alert.Notifier
+	Config    config.Config
+	Log       *slog.Logger
+}
+
+func Routes(d Deps) http.Handler {
+	pool, st, q, blobs, maxUpload, log := d.Pool, d.Store, d.Queue, d.Blobs, d.MaxUpload, d.Log
 	mux := http.NewServeMux()
 
 	// Liveness: "is the process up?" Never touches the database, so a
@@ -49,6 +69,13 @@ func Routes(pool *pgxpool.Pool, st *store.Store, q queue.Queue, blobs *blob.Stor
 		Keys: st, Queue: q, Log: log, Now: time.Now,
 	})
 	(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, Log: log}).Register(mux)
+	(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
+	// Everything else is the dashboard. More specific patterns (above) win,
+	// and an unknown /api/ path must be a JSON 404, not the app's HTML.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteError(w, http.StatusNotFound, "no such API route")
+	})
+	mux.Handle("/", web.Handler())
 	return mux
 }
 
@@ -68,18 +95,27 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		return err
 	}
 	sym := &symbolicate.Service{Files: symbolicate.StoredFiles{Store: st, Blobs: blobs}, Log: log}
+	alerts := &alert.Notifier{
+		Settings:          st,
+		SMTP:              alert.SMTPConfig{Addr: cfg.SMTPAddr, Username: cfg.SMTPUser, Password: cfg.SMTPPassword, From: cfg.SMTPFrom},
+		PublicURL:         cfg.PublicURL,
+		AllowHTTPWebhooks: cfg.AllowHTTPWebhooks,
+		Log:               log,
+	}
+	alerts.Start(2)
+	authSvc := &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}
 
 	workersDone := make(chan struct{})
 	go func() {
 		// Workers get a fresh context, not ctx: they must keep writing
 		// while draining after ctx is cancelled.
-		worker.Run(context.Background(), q.Events(), st, sym, log, cfg.Workers)
+		worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Log: log}, cfg.Workers)
 		close(workersDone)
 	}()
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           Routes(pool, st, q, blobs, int64(cfg.MaxUploadMB)<<20, log),
+		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: authSvc, Alerts: alerts, Config: cfg, Log: log}),
 		ReadHeaderTimeout: 5 * time.Second,  // slow clients can't hold connections open forever
 		ReadTimeout:       30 * time.Second, // a 1 MB body on a bad mobile network
 		WriteTimeout:      30 * time.Second,
@@ -99,6 +135,7 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	case err := <-serveErr:
 		q.Close()
 		<-workersDone
+		alerts.Stop()
 		return err
 	case <-ctx.Done():
 	}
@@ -111,6 +148,7 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	}
 	q.Close()
 	<-workersDone
+	alerts.Stop() // after the workers: they may have just queued alerts
 	log.Info("shutdown complete")
 	return nil
 }

@@ -63,6 +63,13 @@ Write the test that would have caught the bug, or that proves the feature works.
 - Normal inputs hide off-by-one bugs (a source map segment spans a whole token; most return addresses sit mid-line). Test the edges on purpose: a map whose adjacent columns map to different lines, and an address where a new line starts.
 - Workers share parsed files: run with `-race` and a concurrent test.
 
+### Dashboard (UI)
+- Unit tests live in `dashboard/test/` (Vitest + Testing Library + happy-dom). Fake the server with `fakeServer()` from `test/helpers.tsx`, and make it **stateful** when the page reloads after a change (a resolved issue must disappear from the next list fetch, as on the real server), or the test checks the fake instead of the page.
+- Test what a person does, by role and label (`getByRole("tab", { name: "Flutter" })`, `getByLabelText("Search issues")`), not CSS classes. Why: it's how people (and screen readers) find things, and it survives restyling.
+- Every keyboard shortcut needs a test that it works **and** one that it does not fire while typing in a field ("r" in the search box is a letter, not "resolve").
+- Requests that change data must carry the CSRF header: assert it on the recorded call.
+- End-to-end: `dashboard/e2e/dashboard.spec.ts` (Playwright, the system Chrome via `channel: "chrome"`) runs first-run setup → project → errors → resolve → regression → Slack, against a **fresh** server. Extend it when you add a flow. `dashboard/e2e/README.md` says how to run it.
+
 ### Migrations
 - Run up → down → up on a fresh database. Why: it proves the down migration really works, so a bad deploy can be rolled back.
 
@@ -85,6 +92,12 @@ cd sdks && npm install && npm run check   # typecheck + vitest + build
 
 # Flutter
 cd sdks/flutter && dart format --set-exit-if-changed . && flutter analyze && flutter test
+
+# Dashboard
+cd dashboard && npm run check   # tsc (also type-checks the tests) + vitest + vite build
+make dashboard                  # embed the build in the server...
+cd server && go build ./cmd/juju   # ...which only takes effect after rebuilding the Go binary (go:embed runs at compile time)
+cd dashboard && JUJU_E2E_SLACK=<fake slack url> JUJU_E2E_SHOTS=<dir> npm run e2e   # against a fresh server
 ```
 
 For the package you changed, also check coverage with `go test -cover ./internal/<pkg>/...`. Don't chase a percentage. Use the number to find branches you forgot.
@@ -140,7 +153,21 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 - Grouping must survive a new build: change the code above the bug (lines shift, new minified names or build id), upload the new build's file, and check the error joins the **same** issue.
 
 ### Dashboard changes
-- Open the page and click through the changed flow with real ingested data, not an empty database. Check both light and dark mode, and a narrow window.
+- Run `make dashboard`, **rebuild the Go binary**, and confirm the served bundle is the new one: the `index-<hash>.js` name in `curl localhost:8080/` must match `dashboard/dist/assets/`. Otherwise you're testing the old UI.
+- Click through the changed flow with real ingested data (send events with the curl above or the e2e spec), not an empty database. Then check the empty, loading and error states on purpose (stop the server to see the error state).
+- **Look at the screenshots** (`JUJU_E2E_SHOTS`): every changed page in dark and light, at desktop (1360) and phone (390) width. Read them like a user: clipped text, low contrast, gaps in grids, text cut after a few letters on a phone. Screenshots must be taken with `animations: "disabled"` after layout settles, or a theme switch is captured halfway and looks like a contrast bug.
+- With alerts: point the Slack webhook at a local fake (`JUJU_ALLOW_HTTP_WEBHOOKS=true`, a tiny HTTP server that logs POST bodies) and read the payloads. Offer the user a test against their real Slack webhook too.
+
+### UI rules (check every dashboard change against these)
+The look follows fal.ai's product UI, with juju's own identity (no fal.ai logo, names or wording):
+- **Colors only from `dashboard/src/styles/tokens.css`**: `var(--surface)`, `var(--line)`, `var(--brand)`… never a hex value in a component or in `app.css`. A new color is a new token, defined for dark **and** light. Dark is the default: near-black zinc surfaces, hairline borders (white at 5–10 %), white primary button on dark (dark on light), violet brand for focus and selection, 4–6 px radii, small colored chips. The pixel-art palette is for the login screen and empty states only.
+- **Fonts**: Public Sans for text, Chivo Mono for code, ids, counts and file paths. Both are bundled (the CSP blocks font CDNs).
+- **Status is a word plus a color, never color alone** (`Unresolved`, `Resolved`, `Ignored`, `Regressed`), so it reads for color-blind people.
+- **Easy for newer developers**: plain-language labels ("A resolved issue happens again", not "regression trigger"), a sentence under each setting saying what it does, onboarding with copy-paste code and the DSN filled in, empty states that say what to do next, server errors shown in words with a Retry.
+- **Fast for experienced developers**: every common action has a keyboard shortcut shown next to it (`<kbd>`), listed in the `?` dialog (`ShortcutsHelp.tsx`); ⌘K reaches every page; filters live in the URL so views can be shared; raw JSON is one tab away. Shortcuts never fire while typing, and Esc in a dialog closes only the dialog.
+- **Honest copy**: say exactly what the server knows. (Example: symbolication status `missing` means "no source maps for this release", not "frames are minified"; the code may never have been minified.)
+- **Works at 390 px**: no horizontal page scroll (wide tables and tab rows scroll inside their box), and the important text wraps instead of being cut.
+- Secrets: the secret key is shown once and kept only in memory (`lib/secrets.ts`), never in browser storage. The webhook URL is never sent back to the browser.
 
 If you cannot run something (no simulator, Docker not running), say exactly what wasn't verified and why. Never claim it works.
 

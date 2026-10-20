@@ -1,0 +1,127 @@
+/*
+ * juju dashboard design tokens. The look takes its cues from fal.ai's
+ * product UI: near-black zinc surfaces, hairline borders, compact controls,
+ * a white primary button on dark, small colored chips, a violet accent and
+ * pixel-art color for moments of personality. juju has its own identity:
+ * no fal.ai logo, names or wording.
+ *
+ * Every color in the app comes from these tokens. Dark is the default;
+ * light follows the OS setting, and the theme toggle sets data-theme to
+ * override it either way.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #19191a;
+  --bg-sunken: #121216;
+  --surface: #202022;
+  --surface-2: #2d2d2f;
+  --surface-hover: rgba(255, 255, 255, 0.04);
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --text: #f4f4f5;
+  --text-strong: #fafafa;
+  --text-muted: #a6a6ae;
+  --text-faint: #78787f;
+
+  --brand: #a284ff; /* violet: focus, selection, in-app frames */
+  --brand-soft: rgba(162, 132, 255, 0.14);
+  --primary-bg: #fafafa; /* the main action: a white button on dark */
+  --primary-fg: #19191a;
+
+  /* Status colors. Always paired with a word or icon, never color alone. */
+  --red: #ff6568;
+  --red-soft: rgba(255, 101, 104, 0.14);
+  --green: #05df72;
+  --green-soft: rgba(5, 223, 114, 0.13);
+  --amber: #fcbb00;
+  --amber-soft: rgba(252, 187, 0, 0.14);
+  --blue: #54a2ff;
+  --blue-soft: rgba(84, 162, 255, 0.14);
+
+  /* Pixel-art palette, for the login screen and empty states only. */
+  --pixel-1: #a284ff;
+  --pixel-2: #fac800;
+  --pixel-3: #54d0ff;
+  --pixel-4: #05df72;
+
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Chivo Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.875rem;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(0, 0, 0, 0.55); /* behind dialogs */
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-sunken: #f4f4f5;
+    --surface: #f7f7f8;
+    --surface-2: #ececef;
+    --surface-hover: rgba(0, 0, 0, 0.035);
+    --line: rgba(0, 0, 0, 0.08);
+    --line-strong: rgba(0, 0, 0, 0.16);
+    --text: #19191a;
+    --text-strong: #0d0d0e;
+    --text-muted: #5b5b64;
+    --text-faint: #787881;
+    --brand: #6c3dff;
+    --brand-soft: rgba(108, 61, 255, 0.1);
+    --primary-bg: #19191a;
+    --primary-fg: #ffffff;
+    --red: #d1000f;
+    --red-soft: rgba(228, 0, 20, 0.08);
+    --green: #00813a;
+    --green-soft: rgba(0, 165, 68, 0.1);
+    --amber: #a35300;
+    --amber-soft: rgba(249, 156, 0, 0.13);
+    --blue: #115ef3;
+    --blue-soft: rgba(17, 94, 243, 0.08);
+    --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.18);
+    --scrim: rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-sunken: #f4f4f5;
+  --surface: #f7f7f8;
+  --surface-2: #ececef;
+  --surface-hover: rgba(0, 0, 0, 0.035);
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.16);
+  --text: #19191a;
+  --text-strong: #0d0d0e;
+  --text-muted: #5b5b64;
+  --text-faint: #787881;
+  --brand: #6c3dff;
+  --brand-soft: rgba(108, 61, 255, 0.1);
+  --primary-bg: #19191a;
+  --primary-fg: #ffffff;
+  --red: #d1000f;
+  --red-soft: rgba(228, 0, 20, 0.08);
+  --green: #00813a;
+  --green-soft: rgba(0, 165, 68, 0.1);
+  --amber: #a35300;
+  --amber-soft: rgba(249, 156, 0, 0.13);
+  --blue: #115ef3;
+  --blue-soft: rgba(17, 94, 243, 0.08);
+  --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.18);
+  --scrim: rgba(0, 0, 0, 0.3);
+}
