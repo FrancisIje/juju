@@ -21,6 +21,7 @@ import (
 	"juju/internal/config"
 	"juju/internal/httpx"
 	"juju/internal/ingest"
+	"juju/internal/live"
 	"juju/internal/queue"
 	"juju/internal/store"
 	"juju/internal/symbolicate"
@@ -40,6 +41,7 @@ type Deps struct {
 	MaxUpload int64
 	Auth      *auth.Service
 	Alerts    *alert.Notifier
+	Live      *live.Hub
 	Config    config.Config
 	Log       *slog.Logger
 }
@@ -69,7 +71,7 @@ func Routes(d Deps) http.Handler {
 		Keys: st, Queue: q, Log: log, Now: time.Now,
 	})
 	(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, Log: log}).Register(mux)
-	(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
+	(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, Live: d.Live, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
 	// Everything else is the dashboard. More specific patterns (above) win,
 	// and an unknown /api/ path must be a JSON 404, not the app's HTML.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
@@ -103,24 +105,28 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		Log:               log,
 	}
 	alerts.Start(2)
+	hub := live.NewHub()
 	authSvc := &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}
 
 	workersDone := make(chan struct{})
 	go func() {
 		// Workers get a fresh context, not ctx: they must keep writing
 		// while draining after ctx is cancelled.
-		worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Log: log}, cfg.Workers)
+		worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Live: hub, Log: log}, cfg.Workers)
 		close(workersDone)
 	}()
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: authSvc, Alerts: alerts, Config: cfg, Log: log}),
+		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: authSvc, Alerts: alerts, Live: hub, Config: cfg, Log: log}),
 		ReadHeaderTimeout: 5 * time.Second,  // slow clients can't hold connections open forever
 		ReadTimeout:       30 * time.Second, // a 1 MB body on a bad mobile network
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	// Live streams never end by themselves; close them first, or Shutdown
+	// would wait its full timeout for them.
+	srv.RegisterOnShutdown(hub.Close)
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
 		q.Close()

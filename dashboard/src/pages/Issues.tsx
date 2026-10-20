@@ -8,6 +8,7 @@ import { splitTitle } from "../lib/frames";
 import { useShortcuts } from "../lib/keys";
 import { navigate, useLocation } from "../lib/router";
 import { compact, exact, relative } from "../lib/time";
+import { useLive } from "../lib/live";
 import { useApi } from "../lib/useApi";
 import { Onboarding } from "./Onboarding";
 
@@ -50,8 +51,15 @@ export function Issues({ projectId }: { projectId: number }) {
   const params = new URLSearchParams({ status, sort, limit: String(limit) });
   if (q) params.set("q", q);
   if (env) params.set("environment", env);
-  const { data, error, loading, reload, setData } = useApi<ListResponse>(`/api/ui/projects/${projectId}/issues?${params}`, 15_000);
+  const { data, error, loading, reload, setData } = useApi<ListResponse>(`/api/ui/projects/${projectId}/issues?${params}`);
   const project = useApi<{ environments: string[]; counts: Counts }>(`/api/ui/projects/${projectId}`);
+
+  // New errors and teammates' changes appear without a reload.
+  useLive(projectId, () => {
+    void reload(true);
+    void project.reload(true);
+    void reloadMe();
+  });
 
   const issues = useMemo(() => data?.issues ?? [], [data]);
   useEffect(() => setSelected(new Set()), [status, q, env, sort, projectId]);

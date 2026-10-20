@@ -104,13 +104,15 @@ test("first run → project → error → resolve → regression alert", async (
     await page.keyboard.press("i");
   }
 
-  // An error arrives; the page refreshes by itself (every 15 s), or on reload.
+  // Errors arrive while the page is open.
   await sendError(page, dsn, "cart.items is undefined");
   await sendError(page, dsn, "cart.items is undefined");
   // Same type but a different place in the code: a different bug. (juju
   // groups by type + stack, not by message, so the first two group.)
   await sendError(page, dsn, "price.toFixed is not a function", "web@1.0.0", "formatPrice", "src/price.ts");
-  await expect.poll(async () => (await page.reload(), page.locator(".issue-row").count()), { timeout: 15_000 }).toBe(2);
+  // No reload: the server pushes "refresh" over SSE and the list updates
+  // by itself, onboarding included.
+  await expect(page.locator(".issue-row")).toHaveCount(2, { timeout: 5_000 });
   await shoot(page, "05-issues");
 
   // Keyboard only: j down to the cart issue, Enter to open it.
@@ -138,7 +140,7 @@ test("first run → project → error → resolve → regression alert", async (
   const message = title.split(": ").slice(1).join(": ");
   expect(message).toBe("cart.items is undefined");
   await sendError(page, dsn, message, "web@1.0.1");
-  await expect.poll(async () => (await page.reload(), page.locator(".issue-row").count()), { timeout: 15_000 }).toBe(2);
+  await expect(page.locator(".issue-row")).toHaveCount(2, { timeout: 5_000 });
   await expect(page.locator(".chip.regressed")).toHaveText("Regressed");
 
   // ⌘K finds the issue by text.

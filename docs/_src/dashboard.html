@@ -188,6 +188,16 @@ flowchart LR
   </section>
 
   <section>
+    <span class="eyebrow">Live updates</span>
+    <h2>The page refreshes when something changes</h2>
+    <p>An open issue list or issue page keeps a server-sent events (SSE) stream to <code>/api/ui/projects/{id}/live</code>. When an event is stored or a teammate resolves something, the server sends one word, <code>refresh</code>, and the page reloads its data through the normal API. The stream carries no issue data, so it needs no permission rules of its own beyond "you can see this project".</p>
+    <div class="why"><span class="label">Why "refresh" and not the data</span>The list's filters, sorting and counts all live in the API already. Sending changes over the stream would mean a second copy of that logic, kept in sync forever. A reload of one page of issues costs a few milliseconds.</div>
+    <div class="why"><span class="label">A crash loop can't flood the page</span>Signals merge: a burst of 1,000 events causes one refresh, and each stream gets at most one a second. Sending never waits on a slow browser, so the worker storing events is never held up.</div>
+    <div class="why"><span class="label">Hidden tabs let go</span>Over HTTP/1.1 a browser allows 6 connections per site; seven juju tabs each holding a stream would make every other request hang. A hidden tab closes its stream and, when shown again, reconnects and refreshes once. If the stream can't open, the page falls back to checking every 30 seconds.</div>
+    <p class="note">Checked through Caddy with gzip on, the way it's deployed: the refresh arrived 48 ms after the error was sent, and the end-to-end test now waits for new issues without ever reloading the page. Shutting down with a stream open takes 0.02 s, because the server closes streams before waiting for requests to finish.</p>
+  </section>
+
+  <section>
     <span class="eyebrow">Using it</span>
     <h2>Run it and connect an app</h2>
     <pre class="code"><span class="c"># build the dashboard into the server, then start it</span>
@@ -250,9 +260,9 @@ JUJU_SMTP_ADDR=smtp.example.com:587 JUJU_SMTP_USER=… JUJU_SMTP_PASSWORD=… JU
       <li><strong>Real Slack and real email.</strong> Slack was tested with a local fake that logs what it receives, and email with a fake SMTP server in Go tests. Neither has been sent to a real workspace or inbox yet.</li>
       <li><strong>Inviting teammates.</strong> There's no invite screen. Add people with <code>juju user create</code>, or turn on sign-up.</li>
       <li><strong>Browsers.</strong> Checked in Chrome only. Firefox and Safari aren't tested for the dashboard yet.</li>
-      <li><strong>Live updates.</strong> The issue list refreshes every 15 seconds while the tab is visible. Nothing is pushed.</li>
       <li><strong>Alert rules</strong> are two switches, new issues and regressions, per project. There are no filters by environment or volume yet.</li>
       <li><strong>Search</strong> matches text in the title and location only.</li>
+      <li><strong>One server for live updates.</strong> The signal travels inside one process. With several juju servers behind a load balancer, a change on one wouldn't reach pages connected to another, until a shared message bus arrives in Phase 9.</li>
     </ul>
   </section>
 

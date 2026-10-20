@@ -136,3 +136,36 @@ func TestAlertsOnlyForNewIssuesAndRegressions(t *testing.T) {
 		t.Fatalf("alerts = %v", a.kinds)
 	}
 }
+
+type dupStore struct{}
+
+// "dup" is a retried send of an event already stored.
+func (dupStore) SaveEvent(_ context.Context, e *event.Event, _ fingerprint.Result) (store.SaveResult, error) {
+	return store.SaveResult{Inserted: e.EventID != "dup", IssueID: 1}, nil
+}
+
+type recordingLive struct {
+	mu       sync.Mutex
+	projects []int64
+}
+
+func (l *recordingLive) Changed(id int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.projects = append(l.projects, id)
+}
+
+// Every stored event refreshes open dashboards for its project; a retried
+// duplicate changed nothing, so it must not.
+func TestLiveRefreshOnlyForStoredEvents(t *testing.T) {
+	ch := make(chan *event.Event, 3)
+	ch <- &event.Event{EventID: "a", ProjectID: 4, Exception: &event.Exception{Type: "E"}}
+	ch <- &event.Event{EventID: "dup", ProjectID: 4, Exception: &event.Exception{Type: "E"}}
+	ch <- &event.Event{EventID: "b", ProjectID: 9, Exception: &event.Exception{Type: "E"}}
+	close(ch)
+	l := &recordingLive{}
+	Run(context.Background(), ch, Deps{Store: dupStore{}, Live: l, Log: quiet}, 1)
+	if len(l.projects) != 2 || l.projects[0] != 4 || l.projects[1] != 9 {
+		t.Fatalf("refreshes = %v, want [4 9]", l.projects)
+	}
+}

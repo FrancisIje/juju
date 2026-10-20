@@ -18,6 +18,7 @@ import (
 	"juju/internal/alert"
 	"juju/internal/auth"
 	"juju/internal/httpx"
+	"juju/internal/live"
 	"juju/internal/store"
 )
 
@@ -25,8 +26,9 @@ type API struct {
 	Store       *store.Store
 	Auth        *auth.Service
 	Alerts      *alert.Notifier
-	PublicURL   string // used to build DSNs, e.g. https://juju.example.com
-	AllowSignup bool   // after the first user, can anyone sign up?
+	Live        *live.Hub // optional: without it, /live answers 404 and the dashboard polls
+	PublicURL   string    // used to build DSNs, e.g. https://juju.example.com
+	AllowSignup bool      // after the first user, can anyone sign up?
 	Log         *slog.Logger
 }
 
@@ -54,6 +56,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/ui/projects/{project}/alerts", p(a.putAlerts))
 	mux.Handle("POST /api/ui/projects/{project}/alerts/test", p(a.testAlerts))
 	mux.Handle("GET /api/ui/projects/{project}/files", p(a.files))
+	mux.Handle("GET /api/ui/projects/{project}/live", p(a.live))
 }
 
 type projectHandler func(w http.ResponseWriter, r *http.Request, projectID int64, user store.User)
@@ -367,6 +370,10 @@ func (a *API) setStatus(w http.ResponseWriter, r *http.Request, pid int64, u sto
 		a.fail(w, "set status", err)
 		return
 	}
+	// Teammates with the project open see the change too.
+	if n > 0 && a.Live != nil {
+		a.Live.Changed(pid)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]int64{"changed": n})
 }
 
@@ -483,6 +490,16 @@ func (a *API) files(w http.ResponseWriter, r *http.Request, pid int64, _ store.U
 		files = []store.DebugFile{}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// live streams "refresh" signals (server-sent events) while the project
+// is open in a dashboard. See package live.
+func (a *API) live(w http.ResponseWriter, r *http.Request, pid int64, _ store.User) {
+	if a.Live == nil {
+		httpx.WriteError(w, http.StatusNotFound, "live updates are off")
+		return
+	}
+	a.Live.Serve(w, r, pid)
 }
 
 func (a *API) fail(w http.ResponseWriter, what string, err error) {

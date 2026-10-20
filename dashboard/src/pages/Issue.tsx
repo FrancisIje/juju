@@ -11,6 +11,7 @@ import { splitTitle } from "../lib/frames";
 import { useShortcuts } from "../lib/keys";
 import { Link, navigate } from "../lib/router";
 import { compact, exact, relative } from "../lib/time";
+import { useLive } from "../lib/live";
 import { useApi } from "../lib/useApi";
 
 type Tab = "stack" | "crumbs" | "context" | "json";
@@ -34,7 +35,7 @@ const activityText: Record<Activity["kind"], string> = {
 export function Issue({ projectId, issueId }: { projectId: number; issueId: number }) {
   const { toast, reloadMe } = useApp();
   const base = `/p/${projectId}/issues`;
-  const issue = useApi<IssueDetail>(`/api/ui/projects/${projectId}/issues/${issueId}`, 30_000);
+  const issue = useApi<IssueDetail>(`/api/ui/projects/${projectId}/issues/${issueId}`);
   const [events, setEvents] = useState<EventPayload[]>([]);
   const [more, setMore] = useState(true);
   const [index, setIndex] = useState(0);
@@ -59,6 +60,13 @@ export function Issue({ projectId, issueId }: { projectId: number; issueId: numb
     loadEvents().catch(() => setMore(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, issueId]);
+
+  useLive(projectId, () => {
+    void issue.reload(true);
+    // Show a new event only when looking at the newest one, so a burst of
+    // errors doesn't move the event someone is reading.
+    if (index === 0) loadEvents().catch(() => {});
+  });
 
   async function older() {
     if (index < events.length - 1) return setIndex(index + 1);

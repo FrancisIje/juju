@@ -27,6 +27,12 @@ type Alerter interface {
 	IssueEvent(e *event.Event, fp fingerprint.Result, res store.SaveResult)
 }
 
+// Live is told when a project's issues changed, so open dashboards
+// refresh. Optional, and like Alerter it must not block.
+type Live interface {
+	Changed(projectID int64)
+}
+
 // Symbolicator rewrites minified or obfuscated frames into source
 // locations. Optional: nil skips symbolication.
 type Symbolicator interface {
@@ -46,6 +52,7 @@ type Deps struct {
 	Store        Store
 	Symbolicator Symbolicator
 	Alerter      Alerter
+	Live         Live
 	Log          *slog.Logger
 }
 
@@ -89,6 +96,10 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 			log.Debug("event stored", "fingerprint", fp.Hash[:12], "duplicate", !res.Inserted, "new_issue", res.NewIssue, "regressed", res.Regressed)
 			if d.Alerter != nil && (res.NewIssue || res.Regressed) {
 				d.Alerter.IssueEvent(e, fp, res)
+			}
+			// A retried duplicate changed nothing, so nothing to refresh.
+			if d.Live != nil && res.Inserted {
+				d.Live.Changed(e.ProjectID)
 			}
 			return
 		}
