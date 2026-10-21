@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -304,4 +305,59 @@ func TestWriterRetriesWhenClickHouseFails(t *testing.T) {
 	if calls.Load() < 3 {
 		t.Errorf("expected retries, got %d calls", calls.Load())
 	}
+}
+
+// Retention is a table TTL: ClickHouse drops expired data on its own.
+// OPTIMIZE ... FINAL forces the merge that would otherwise happen later.
+func TestRetentionTTL(t *testing.T) {
+	ctx := context.Background()
+	c := &Client{URL: chURL, Database: fmt.Sprintf("test_%d", rand.Int64N(1<<40)), RetentionDays: 30}
+	t.Cleanup(func() { _ = c.Exec(context.Background(), "DROP DATABASE IF EXISTS "+c.Database) })
+	for i := 0; i < 2; i++ { // the second run must find nothing to change
+		if err := c.Migrate(ctx); err != nil {
+			t.Fatalf("Migrate %d: %v", i, err)
+		}
+	}
+	engine := func() string {
+		out, err := c.do(ctx, `SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = 'events' FORMAT TSVRaw`, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	if e := engine(); !strings.Contains(e, "toIntervalDay(30)") || !strings.Contains(e, "ttl_only_drop_parts = 1") {
+		t.Fatalf("TTL not set: %s", e)
+	}
+
+	old, recent := time.Now().UTC().AddDate(0, 0, -400), time.Now().UTC().Add(-time.Hour)
+	var rows []any
+	for _, ts := range []time.Time{old, recent} {
+		e := &event.Event{EventID: uuidFor(ts), Type: event.TypeEvent, Name: "page_view", DistinctID: "u1", Time: ts, ProjectID: 1}
+		rows = append(rows, Row(e))
+	}
+	if err := c.Insert(ctx, "events", rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Exec(ctx, "OPTIMIZE TABLE events FINAL"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.do(ctx, "SELECT count() FROM events FORMAT TSVRaw", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "1" {
+		t.Errorf("after the merge %s events left, want 1 (the 400-day-old one dropped)", got)
+	}
+
+	c.RetentionDays = 0
+	if err := c.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if e := engine(); strings.Contains(e, " TTL ") {
+		t.Errorf("RetentionDays 0 should remove the TTL: %s", e)
+	}
+}
+
+func uuidFor(t time.Time) string {
+	return fmt.Sprintf("8f14e45f-ceea-4f6a-9b1e-%012d", t.Unix()%1e12)
 }

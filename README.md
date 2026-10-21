@@ -75,7 +75,8 @@ After `deploy/deploy.sh ci-key root@SERVER_IP` (once), **main is the production 
 request merged into main runs the full CI on GitHub Actions and then deploys that commit. If a check
 fails, nothing is deployed. To redeploy without a new commit, use "Run workflow" on the Deploy action.
 
-Config lives in `/etc/juju/juju.env` (SMTP for email alerts), logs in `journalctl -u juju`, and
+The event queue is embedded in juju and lives in `/var/lib/juju/queue`, so there's no extra service to
+run. Config lives in `/etc/juju/juju.env` (SMTP for email alerts), logs in `journalctl -u juju`, and
 `/etc/cron.daily/juju-backup` dumps the database daily. Run `deploy/deploy.sh release` again for
 each update: migrations apply on start.
 
@@ -154,6 +155,34 @@ juju upload -kind dart_symbols build/symbols/                   # Flutter --spli
 The release must match what the SDK sends. Dart symbols are matched by build id. If frames still look
 minified, the event's `symbolication.notes` say what's missing.
 
+## Scale, limits and privacy
+
+An event that got `202` is stored, even if the server is killed a moment later: ingest answers only
+after the event is in a durable queue (NATS JetStream, embedded in the binary and kept in
+`JUJU_DATA_DIR/queue`), and workers acknowledge it only once it's in Postgres. A database outage
+doesn't stop ingest either: events wait in the queue until Postgres is back.
+
+| Setting | Default | |
+|---|---|---|
+| `JUJU_RATE_LIMIT` | `1000` | events/s per project (token bucket, bursts of 5 s); over it, `429` + `Retry-After` |
+| `JUJU_RETENTION_DAYS` | `90` | errors, sessions, transactions are deleted after this (issues stay); `0` keeps them |
+| `JUJU_ANALYTICS_RETENTION_DAYS` | `365` | ClickHouse table TTL; `0` keeps them |
+| `JUJU_SCRUB_PII` | `true` | removes emails, URL tokens, Bearer/Basic credentials, JWTs and values under keys like `password` at ingest, before anything is written; `user.*` and `distinct_id` are kept |
+| `JUJU_QUEUE_MAX_MB` | `1024` | queue size on disk; past it, `429` |
+
+Per-project limits: `juju project limits -id 1 -rate 500 -quota 5000000` (`-rate default`,
+`-quota none` to clear; running servers pick changes up within 30 s). SDKs can send a share of
+errors with `sampleRate: 0.25`; sessions still count every error, so crash-free rates stay exact.
+
+To run ingest, workers and the dashboard as separate processes, point them at one NATS JetStream
+server (`nats-server -js`) and give each its part:
+
+```bash
+JUJU_ROLES=ingest JUJU_NATS_URL=nats://nats:4222 juju serve   # POST /api/v1/.../events only
+JUJU_ROLES=worker JUJU_NATS_URL=nats://nats:4222 juju serve   # stores events, alerts, retention
+JUJU_ROLES=api    JUJU_NATS_URL=nats://nats:4222 juju serve   # dashboard and read API
+```
+
 ## Tests
 
 ```bash
@@ -161,7 +190,8 @@ make sdk-test          # JavaScript SDK tests
 make flutter-test      # Flutter SDK: format, analyze, tests
 make test              # gofmt, go vet, unit tests with -race
 make test-integration  # also runs against a real (embedded) Postgres and ClickHouse
-make fuzz              # fuzz the event parser for 30s
+make fuzz              # fuzz the event parser and the PII scrubber, 30s each
+make loadtest URL=http://127.0.0.1:8080 PROJECT=1 KEY=pk_...   # k6: p99 under 50 ms at 5,000 events/s
 make dashboard-test    # dashboard: type-check and unit tests
 ```
 
@@ -173,13 +203,13 @@ In Claude Code, run `/verify` after any change: it writes tests and checks the c
 
 ```
 server/
-  cmd/juju/            the binary: serve, migrate, project create, user create, upload
+  cmd/juju/            the binary: serve, migrate, project create/limits, user create, upload
   cmd/devdb/           local Postgres without Docker (-port for a second checkout)
   internal/event/      v1 wire format, validation and repair rules
   internal/fingerprint grouping events into issues
   internal/ingest/     POST /api/v1/projects/{id}/events
-  internal/queue/      buffered channel between ingest and workers
-  internal/worker/     fingerprint + store, with retries
+  internal/queue/      durable queue between ingest and workers (NATS JetStream, embedded or shared)
+  internal/worker/     fingerprint + store; retries with backoff, then a dead-letter stream
   internal/store/      all SQL
   internal/api/        read endpoints and debug file uploads (secret key)
   internal/symbolicate source maps and Dart DWARF back to source, before fingerprinting
@@ -190,9 +220,10 @@ server/
   internal/alert/      Slack and email alerts for new issues and regressions
   internal/web/        serves the embedded dashboard build
   internal/analytics/  ClickHouse: batched writes, trends, funnels, retention
-  internal/live/       server-sent events that refresh open dashboards
+  internal/live/       server-sent events that refresh open dashboards, across processes via NATS
   internal/testch/     starts a real ClickHouse for integration tests
 scripts/devch.sh       pinned ClickHouse for development, tests and CI
+loadtest/ingest.js     k6 load test for ingest (make loadtest)
 dashboard/             the dashboard: React + Vite, styles in src/styles/tokens.css
 sdks/
   js-core/             @juju/core: events, stack parsing, queue, batching, retry

@@ -69,6 +69,13 @@ JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123
 #JUJU_SMTP_USER=
 #JUJU_SMTP_PASSWORD=
 #JUJU_SMTP_FROM=juju <alerts@$DOMAIN>
+# Limits and data (defaults shown). Per-project limits: juju-admin project limits
+#JUJU_RATE_LIMIT=1000              # events/s per project; 0 = no default limit
+#JUJU_RETENTION_DAYS=90            # error events, sessions, transactions; 0 = keep
+#JUJU_ANALYTICS_RETENTION_DAYS=365 # ClickHouse analytics events; 0 = keep
+#JUJU_SCRUB_PII=true               # remove emails, URL tokens etc. at ingest
+# The event queue is embedded and kept in JUJU_DATA_DIR/queue (max 1 GB).
+#JUJU_QUEUE_MAX_MB=1024
 EOF
 fi
 # Servers set up before analytics existed: turn it on, once.

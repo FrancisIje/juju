@@ -16,7 +16,6 @@ package ingest
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -33,17 +32,13 @@ import (
 	"juju/internal/store"
 )
 
-// Keys looks up a project's public key. In production this hits Postgres on
-// every request; a small in-memory cache is an easy later optimization.
-type Keys interface {
-	ProjectPublicKey(ctx context.Context, projectID int64) (string, error)
-}
-
 type Handler struct {
-	Keys  Keys
-	Queue queue.Queue
-	Log   *slog.Logger
-	Now   func() time.Time // injectable clock so tests are deterministic
+	Projects Projects // wrap in a ProjectCache in production
+	Limits   *Limits  // nil: no rate limits or quotas
+	KeepPII  bool     // skip event.Scrub (JUJU_SCRUB_PII=false)
+	Queue    queue.Publisher
+	Log      *slog.Logger
+	Now      func() time.Time // injectable clock so tests are deterministic
 }
 
 type DroppedEvent struct {
@@ -66,7 +61,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "unknown project")
 		return
 	}
-	if status, msg := h.authenticate(r, projectID); status != 0 {
+	project, status, msg := h.authenticate(r, projectID)
+	if status != 0 {
 		httpx.WriteError(w, status, msg)
 		return
 	}
@@ -109,6 +105,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			resp.Dropped = append(resp.Dropped, DroppedEvent{Index: i, Reason: err.Error()})
 			continue
 		}
+		// Scrub here, before the queue, so what it removes is never
+		// written to disk anywhere.
+		if !h.KeepPII {
+			e.Scrub()
+		}
 		e.ProjectID = projectID
 		e.SDK = env.SDK
 		accepted = append(accepted, e)
@@ -119,24 +120,48 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, e := range accepted {
-		if !h.Queue.TryEnqueue(e) {
-			// Workers are behind. Some events of this batch may already be
-			// queued; that is fine, because the SDK retries the whole batch
-			// and dedupe on event_id drops the copies.
+	// Limits are checked here, after validation, so that only events we'd
+	// actually keep count against them.
+	if h.Limits != nil {
+		if rej := h.Limits.Allow(r.Context(), projectID, project, len(accepted)); rej != nil {
+			// Round up: "Retry-After: 0" would invite an instant retry.
+			secs := max(1, int((rej.RetryAfter+time.Second-1)/time.Second))
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			httpx.WriteError(w, http.StatusTooManyRequests, rej.Reason)
+			return
+		}
+	}
+
+	// 202 below is a promise: Publish returns only once every event is
+	// stored by the queue. Some of a failed batch may already be queued;
+	// that's fine, because the SDK retries the whole batch and the queue
+	// (and the store) drop the copies by event_id.
+	if err := h.Queue.Publish(r.Context(), accepted); err != nil {
+		if h.Limits != nil {
+			h.Limits.Refund(projectID, len(accepted))
+		}
+		if errors.Is(err, queue.ErrFull) {
+			// Workers are far behind (or the database is down).
 			h.Log.Warn("queue full, rejecting batch", "project_id", projectID)
 			w.Header().Set("Retry-After", "5")
 			httpx.WriteError(w, http.StatusTooManyRequests, "server is busy, retry later")
 			return
 		}
+		h.Log.Error("queue unavailable", "project_id", projectID, "err", err)
+		w.Header().Set("Retry-After", "5")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "temporarily unavailable, retry later")
+		return
+	}
+	if h.Limits != nil {
+		h.Limits.Accepted(projectID, len(accepted))
 	}
 	resp.Accepted = len(accepted)
 	httpx.WriteJSON(w, http.StatusAccepted, resp)
 }
 
 // authenticate returns a non-zero status when the request may not send
-// events to this project.
-func (h *Handler) authenticate(r *http.Request, projectID int64) (int, string) {
+// events to this project, and the project's settings when it may.
+func (h *Handler) authenticate(r *http.Request, projectID int64) (store.IngestProject, int, string) {
 	got := r.Header.Get("X-Juju-Key")
 	if got == "" {
 		// sendBeacon can't set headers, so browsers send the key in the URL.
@@ -144,25 +169,25 @@ func (h *Handler) authenticate(r *http.Request, projectID int64) (int, string) {
 		got = r.URL.Query().Get("juju_key")
 	}
 	if got == "" {
-		return http.StatusUnauthorized, "missing X-Juju-Key header"
+		return store.IngestProject{}, http.StatusUnauthorized, "missing X-Juju-Key header"
 	}
-	want, err := h.Keys.ProjectPublicKey(r.Context(), projectID)
+	p, err := h.Projects.ProjectIngest(r.Context(), projectID)
 	if errors.Is(err, store.ErrNotFound) {
 		// Same answer as a wrong key, so nobody can probe which project
 		// ids exist.
-		return http.StatusUnauthorized, "invalid project key"
+		return p, http.StatusUnauthorized, "invalid project key"
 	}
 	if err != nil {
 		h.Log.Error("look up project key", "project_id", projectID, "err", err)
-		return http.StatusServiceUnavailable, "temporarily unavailable"
+		return p, http.StatusServiceUnavailable, "temporarily unavailable"
 	}
 	// ConstantTimeCompare takes the same time whether the first or the last
 	// byte differs. A normal == stops at the first difference, and that
 	// timing difference can leak the key one character at a time.
-	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-		return http.StatusUnauthorized, "invalid project key"
+	if subtle.ConstantTimeCompare([]byte(got), []byte(p.PublicKey)) != 1 {
+		return p, http.StatusUnauthorized, "invalid project key"
 	}
-	return 0, ""
+	return p, 0, ""
 }
 
 // readBody reads the request body, decompressing gzip, and enforces

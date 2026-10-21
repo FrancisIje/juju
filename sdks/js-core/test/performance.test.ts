@@ -216,3 +216,30 @@ it("sessions and transactions are kept and retried like errors", async () => {
   expect(c.pending()).toBe(2);
   expect(sent[0]?.events.map((e: OutgoingEvent) => e.type)).toEqual(["session", "transaction"]);
 });
+
+describe("sampleRate (errors)", () => {
+  it("sends the sampled share of errors, but the session counts all of them", async () => {
+    // Rolls below 0.25 are kept: two of these four.
+    const rolls = [0.1, 0.5, 0.24, 0.9];
+    let r = 0;
+    const { c, events, sessions } = setup({ sampleRate: 0.25, random: () => rolls[r++ % 4]! });
+    c.startSession();
+    const ids = [1, 2, 3, 4].map((i) => c.captureException(new Error(`e${i}`)));
+    c.endSession();
+    await c.flush();
+
+    expect(ids.map((id) => id !== "")).toEqual([true, false, true, false]);
+    const errors = events().filter((e) => e.type === "error");
+    expect(errors.map((e) => e.type === "error" && e.exception.message)).toEqual(["e1", "e3"]);
+    // The crash-free rate comes from sessions, so it must not be sampled.
+    const all = sessions();
+    expect(all[all.length - 1]?.session.errors).toBe(4);
+  });
+
+  it("defaults to sending every error", async () => {
+    const { c, events } = setup({ random: () => 0.999 });
+    c.captureException(new Error("x"));
+    await c.flush();
+    expect(events().filter((e) => e.type === "error")).toHaveLength(1);
+  });
+});

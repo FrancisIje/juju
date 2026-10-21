@@ -40,6 +40,8 @@ export interface ReactNativeOptions {
   tracing?: boolean;
   /** Share of transactions to send, 0 to 1. Default 1. */
   tracesSampleRate?: number;
+  /** Share of errors to send, 0 to 1 (default 1). Sessions still count every error. */
+  sampleRate?: number;
   debug?: boolean;
   flushIntervalMs?: number;
   /** Replace how events are sent (used by tests). */
@@ -76,6 +78,7 @@ export function init(options: ReactNativeOptions): void {
   if (options.flushIntervalMs) clientOptions.flushIntervalMs = options.flushIntervalMs;
   if (options.transport) clientOptions.transport = options.transport;
   if (options.tracesSampleRate !== undefined) clientOptions.tracesSampleRate = options.tracesSampleRate;
+  if (options.sampleRate !== undefined) clientOptions.sampleRate = options.sampleRate;
   if (options.storage) {
     clientOptions.persistence = asyncStorageQueue(options.storage);
     clientOptions.identityStorage = options.storage; // the anonymous id, so one install stays one person

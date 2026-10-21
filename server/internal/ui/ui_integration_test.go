@@ -83,6 +83,19 @@ func run(m *testing.M) int {
 
 var chURL string
 
+// newQueue is the real durable queue (embedded JetStream, the default in
+// production), in a folder of its own, so these tests run the same path an
+// event takes in production: ingest -> JetStream -> worker -> Postgres.
+func newQueue(t *testing.T) *queue.JetStream {
+	t.Helper()
+	q, err := queue.OpenJetStream(context.Background(), queue.JetStreamConfig{Dir: t.TempDir(), AckWait: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close) // runs after the test's own cleanups (StopDeliveries)
+	return q
+}
+
 // slack records messages posted to a fake incoming webhook.
 type slack struct {
 	mu   sync.Mutex
@@ -187,14 +200,14 @@ func expectRefresh(t *testing.T, ch <-chan string, when string) {
 func TestDashboardFlowEndToEnd(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st := store.New(pool)
-	q := queue.NewChan(100)
+	q := newQueue(t)
 	blobs, _ := blob.New(t.TempDir())
 	notifier := &alert.Notifier{Settings: st, PublicURL: "http://juju.test", AllowHTTPWebhooks: true, Log: log}
 	notifier.Start(1)
 	hub := live.NewHub()
 	live.MinGap = 0
-	go worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Alerter: notifier, Live: hub, Log: log}, 1)
-	t.Cleanup(func() { q.Close(); notifier.Stop() })
+	go worker.Run(context.Background(), q, worker.Deps{Store: st, Alerter: notifier, Live: hub, Log: log}, 1)
+	t.Cleanup(func() { q.StopDeliveries(); notifier.Stop() })
 
 	cfg := config.Config{PublicURL: "http://juju.test"}
 	srv := httptest.NewServer(server.Routes(server.Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: notifier, Live: hub, Config: cfg, Log: log}))
@@ -396,7 +409,7 @@ func TestInvites(t *testing.T) {
 	st := store.New(pool)
 	ctx := context.Background()
 	cfg := config.Config{PublicURL: "http://juju.test"} // sign-up closed
-	srv := httptest.NewServer(server.Routes(server.Deps{Pool: pool, Store: st, Queue: queue.NewChan(10), MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: &alert.Notifier{Settings: st, Log: log}, Config: cfg, Log: log}))
+	srv := httptest.NewServer(server.Routes(server.Deps{Pool: pool, Store: st, Queue: newQueue(t), MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: &alert.Notifier{Settings: st, Log: log}, Config: cfg, Log: log}))
 	defer srv.Close()
 
 	user := func(email, org string) *client {

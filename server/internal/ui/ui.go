@@ -24,10 +24,13 @@ import (
 )
 
 type API struct {
-	Store       *store.Store
-	Auth        *auth.Service
-	Alerts      *alert.Notifier
-	Live        *live.Hub         // optional: without it, /live answers 404 and the dashboard polls
+	Store  *store.Store
+	Auth   *auth.Service
+	Alerts *alert.Notifier
+	Live   *live.Hub // optional: without it, /live answers 404 and the dashboard polls
+	// Changes is told when a teammate changes an issue, so every API
+	// process refreshes its dashboards (the live Bus). Default: Live.
+	Changes     interface{ Changed(projectID int64) }
 	Analytics   *analytics.Client // optional: nil when ClickHouse isn't configured
 	PublicURL   string            // used to build DSNs, e.g. https://juju.example.com
 	AllowSignup bool              // can anyone create an account and organization? (the first account always can)
@@ -394,7 +397,9 @@ func (a *API) setStatus(w http.ResponseWriter, r *http.Request, pid int64, u sto
 		return
 	}
 	// Teammates with the project open see the change too.
-	if n > 0 && a.Live != nil {
+	if n > 0 && a.Changes != nil {
+		a.Changes.Changed(pid)
+	} else if n > 0 && a.Live != nil {
 		a.Live.Changed(pid)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]int64{"changed": n})

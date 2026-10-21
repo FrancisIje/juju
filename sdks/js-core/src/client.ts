@@ -53,6 +53,14 @@ export interface ClientOptions {
   now?: () => number;
   /** Share of transactions to send, 0 to 1. Default 1: all of them. */
   tracesSampleRate?: number;
+  /**
+   * Share of errors to send, 0 to 1. Default 1: all of them. For apps with
+   * so many users that every error would be far more than you need (or
+   * than your plan's quota). A dropped error still counts in its session,
+   * so crash-free rates stay exact. Sessions and analytics events are
+   * never sampled: counts built from them would be wrong.
+   */
+  sampleRate?: number;
 }
 
 /** Somewhere to keep queued events between app launches. */
@@ -225,6 +233,11 @@ export class Client implements TransactionHost {
         this.seen.add(thrown);
       }
       this.sessionError(extra?.crashed ?? false, true);
+      const rate = this.opts.sampleRate ?? 1;
+      if (rate < 1 && this.opts.random() >= rate) {
+        this.log(`error dropped by sampleRate ${rate}`);
+        return "";
+      }
       let event: JujuEvent | null = this.buildEvent(thrown, extra?.tags);
       if (this.opts.beforeSend) event = this.opts.beforeSend(event);
       if (!event) return "";

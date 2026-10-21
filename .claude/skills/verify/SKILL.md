@@ -78,6 +78,11 @@ Write the test that would have caught the bug, or that proves the feature works.
 
 ### Migrations
 - Run up → down → up on a fresh database. Why: it proves the down migration really works, so a bad deploy can be rolled back.
+- An index on a big table (`events`) is built with `CREATE INDEX CONCURRENTLY` in its own `-- +goose NO TRANSACTION` file. A plain `CREATE INDEX` blocks writes while it builds, so the deploy would stall ingest.
+
+### Queue and workers
+- Anything that goes through the queue is JSON. A field marked `json:"-"` is lost on the way: rebuild it after the queue (`Event.RestoreParsed`) and extend `TestQueueRoundTrip`. The in-memory test queue (`queue.Chan`) passes Go objects and hides this, so run the integration suite too: it uses real JetStream.
+- A worker returns an error to retry. It never sleeps or loops by itself: the queue owns retries, backoff and the dead-letter stream.
 
 ## Step 3: Run the automated checks
 
@@ -157,6 +162,12 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 - Upload with the CLI: `juju upload -kind sourcemap -release <the SDK's release> <dir>` (web: `make example-web-build` then `examples/web/dist`; React Native Android: `android/app/build/generated/sourcemaps/react/release/index.android.bundle.map`) or `juju upload -kind dart_symbols build/symbols` (Flutter: `flutter build apk --release --obfuscate --split-debug-info=build/symbols`).
 - Wait 30 s (the "not uploaded" answer is cached that long) and send again: status `symbolicated`, real file:line, `raw` holds the original frame, in_app correct (node_modules, Dart SDK and Flutter frames are not app code).
 - Grouping must survive a new build: change the code above the bug (lines shift, new minified names or build id), upload the new build's file, and check the error joins the **same** issue.
+
+### Ingest durability, limits and privacy (server/internal/queue, ingest, worker)
+- Tests must not be the only proof that "202 means stored". Flood the server, `kill -9` it mid-flood, start it again, and compare every event id that got a 202 with the ids in `events`: none missing, none twice. Do the same with Postgres stopped for longer than the 30 s project cache: ingest must keep answering 202, and the event must be stored once Postgres is back.
+- Latency: `make loadtest` (k6, constant arrival rate) against a project with `juju project limits -id N -rate 0`, or the default rate limit turns the test into 429s. Report p99 *and* whether the workers kept up: the queue directory's size after the run, and the stored count against the accepted count. Note the machine's load average: k6, juju and Postgres share one laptop.
+- PII: send an event with an email, a `?token=` URL and an `Authorization` header, then check the stored payload **and** the queue's files on disk (`grep -r -a` in `JUJU_DATA_DIR/queue`, while Postgres is stopped so the event stays queued). Scrubbing must happen before the queue.
+- Limits: `juju project limits` on a test project, then send bursts: `429` with a `Retry-After` the SDKs can obey, and usage that survives a restart.
 
 ### Analytics changes
 - Run ClickHouse with `make devch` (or `scripts/devch.sh <dir>`; a pinned, checksum-checked build) and start juju with `JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123`. The log must say `analytics on`.

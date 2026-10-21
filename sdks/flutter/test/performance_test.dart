@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:clock/clock.dart';
 import 'package:fake_async/fake_async.dart';
@@ -296,4 +297,38 @@ void main() {
       Juju.close();
     });
   });
+
+  group('sampleRate (errors)', () {
+    test('sends the sampled share of errors, but the session counts them all', () {
+      fake((async) {
+        final t = FakeTransport();
+        // Rolls below 0.25 are kept: two of these four.
+        final c =
+            JujuClient(ClientOptions(dsn: dsn, transport: t, release: 'shop@1.0', sampleRate: 0.25, random: _Rolls([0.1, 0.5, 0.24, 0.9])))
+              ..startSession();
+        final ids = [for (var i = 1; i <= 4; i++) c.captureException(StateError('e$i'), StackTrace.current)];
+        c.endSession();
+        c.flush();
+        async.flushMicrotasks();
+        expect(ids.map((id) => id.isNotEmpty), [true, false, true, false]);
+        expect(t.ofType('error').map((e) => (e['exception'] as Map)['message']), ['Bad state: e1', 'Bad state: e3']);
+        // The crash-free rate comes from sessions, so they must not be sampled.
+        expect(sessionOf(t.ofType('session').last)['errors'], 4);
+      });
+    });
+  });
+}
+
+/// Returns the given rolls from nextDouble, in order; ids stay random.
+class _Rolls implements Random {
+  _Rolls(this.rolls);
+  final List<double> rolls;
+  final _ids = Random(1);
+  var _i = 0;
+  @override
+  double nextDouble() => rolls[_i++ % rolls.length];
+  @override
+  int nextInt(int max) => _ids.nextInt(max);
+  @override
+  bool nextBool() => _ids.nextBool();
 }

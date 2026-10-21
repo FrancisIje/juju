@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,43 +17,50 @@ import (
 	"time"
 
 	"juju/internal/event"
+	"juju/internal/queue"
 	"juju/internal/store"
 )
 
 const key = "pk_test"
 
-// fakeKeys and fakeQueue stand in for Postgres and the channel, so these
+// fakeKeys and fakeQueue stand in for Postgres and the queue, so these
 // tests check only the handler's own logic, in milliseconds.
 type fakeKeys map[int64]string
 
-func (f fakeKeys) ProjectPublicKey(_ context.Context, id int64) (string, error) {
+func (f fakeKeys) ProjectIngest(_ context.Context, id int64) (store.IngestProject, error) {
 	k, ok := f[id]
 	if !ok {
-		return "", store.ErrNotFound
+		return store.IngestProject{}, store.ErrNotFound
 	}
-	return k, nil
+	return store.IngestProject{PublicKey: k}, nil
 }
 
 type fakeQueue struct {
 	events []*event.Event
 	room   int
+	broken bool // the queue can't be reached
 }
 
-func (q *fakeQueue) TryEnqueue(e *event.Event) bool {
-	if len(q.events) >= q.room {
-		return false
+func (q *fakeQueue) Publish(_ context.Context, events []*event.Event) error {
+	if q.broken {
+		return errors.New("connection refused")
 	}
-	q.events = append(q.events, e)
-	return true
+	for _, e := range events {
+		if len(q.events) >= q.room {
+			return queue.ErrFull
+		}
+		q.events = append(q.events, e)
+	}
+	return nil
 }
 
 func newMux(q *fakeQueue) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/projects/{id}/events", &Handler{
-		Keys:  fakeKeys{1: key},
-		Queue: q,
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now:   func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
+		Projects: fakeKeys{1: key},
+		Queue:    q,
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:      func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
 	})
 	return mux
 }
@@ -242,5 +250,47 @@ func TestPreflight(t *testing.T) {
 	}
 	if h.Get("Access-Control-Allow-Methods") != "POST" || h.Get("Access-Control-Allow-Origin") != "*" {
 		t.Errorf("headers = %v", h)
+	}
+}
+
+// If the queue can't be reached, nothing was stored: answer 503 (with
+// Retry-After), which the SDKs retry, never a 202 that would be a lie.
+func TestQueueDownMeans503(t *testing.T) {
+	req := httptest.NewRequest("POST", "/api/v1/projects/1/events", strings.NewReader(envelope(goodEvent("6f1d2b7e-4a35-4c0e-9a4e-3b7f9c2d1e0a"))))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Juju-Key", key)
+	rec := httptest.NewRecorder()
+	newMux(&fakeQueue{room: 10, broken: true}).ServeHTTP(rec, req)
+	if rec.Code != 503 || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("got %d (Retry-After %q), want 503 with Retry-After", rec.Code, rec.Header().Get("Retry-After"))
+	}
+}
+
+// Scrubbing happens before the queue: what reaches it (and so the disk)
+// has no email. With KeepPII it's passed through as sent.
+func TestScrubsBeforeQueueing(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		q := &fakeQueue{room: 10}
+		mux := http.NewServeMux()
+		mux.Handle("POST /api/v1/projects/{id}/events", &Handler{
+			Projects: fakeKeys{1: key}, Queue: q, KeepPII: keep,
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: time.Now,
+		})
+		body := envelope(`{"event_id":"8f14e45f-ceea-4f6a-9b1e-1f0b2c3d4e5f","type":"error","platform":"javascript","exception":{"type":"E","message":"no account for ada@example.com"}}`)
+		req := httptest.NewRequest("POST", "/api/v1/projects/1/events", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Juju-Key", key)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted || len(q.events) != 1 {
+			t.Fatalf("keep=%v: %d %s", keep, rec.Code, rec.Body)
+		}
+		want := "no account for [email]"
+		if keep {
+			want = "no account for ada@example.com"
+		}
+		if got := q.events[0].Exception.Message; got != want {
+			t.Errorf("keep=%v: queued message %q, want %q", keep, got, want)
+		}
 	}
 }

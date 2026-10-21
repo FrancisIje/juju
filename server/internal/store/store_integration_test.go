@@ -207,15 +207,71 @@ func TestProjectsAreIsolated(t *testing.T) {
 func TestProjectKeys(t *testing.T) {
 	s, p := newProject(t)
 	ctx := context.Background()
-	if got, _ := s.ProjectPublicKey(ctx, p.ID); got != p.PublicKey {
-		t.Errorf("public key = %q, want %q", got, p.PublicKey)
+	got, _ := s.ProjectIngest(ctx, p.ID)
+	if got.PublicKey != p.PublicKey {
+		t.Errorf("public key = %q, want %q", got.PublicKey, p.PublicKey)
+	}
+	if got.RateLimit != nil || got.MonthlyQuota != nil {
+		t.Errorf("a new project has no limits of its own, got %+v", got)
 	}
 	hash, _ := s.ProjectSecretHash(ctx, p.ID)
 	if string(hash) != string(store.HashSecret(p.SecretKey)) {
 		t.Error("stored hash does not match the secret key")
 	}
-	if _, err := s.ProjectPublicKey(ctx, 999_999); err != store.ErrNotFound {
+	if _, err := s.ProjectIngest(ctx, 999_999); err != store.ErrNotFound {
 		t.Errorf("unknown project: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestProjectLimitsAndUsage(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	other, err := s.CreateProject(ctx, t.Name()+"-other", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rate, quota := 0, int64(5000)
+	if err := s.SetProjectLimits(ctx, p.ID, &rate, &quota); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.ProjectIngest(ctx, p.ID)
+	if got.RateLimit == nil || *got.RateLimit != 0 || got.MonthlyQuota == nil || *got.MonthlyQuota != 5000 {
+		t.Errorf("limits = %+v, want rate 0 (unlimited, not unset) and quota 5000", got)
+	}
+	if err := s.SetProjectLimits(ctx, p.ID, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ProjectIngest(ctx, p.ID); got.RateLimit != nil || got.MonthlyQuota != nil {
+		t.Errorf("cleared limits = %+v, want both nil", got)
+	}
+	if err := s.SetProjectLimits(ctx, 999_999, nil, nil); err != store.ErrNotFound {
+		t.Errorf("unknown project: err = %v, want ErrNotFound", err)
+	}
+
+	oct := store.MonthStart(time.Date(2026, 10, 21, 23, 59, 0, 0, time.FixedZone("UTC+3", 3*3600)))
+	if !oct.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("MonthStart = %v", oct) // 23:59 at UTC+3 is still the 21st in UTC
+	}
+	nov := oct.AddDate(0, 1, 0)
+	// Two flushes into the same row add up: that's how several ingest
+	// processes share one count. A deleted project is skipped, not an error.
+	for _, counts := range []map[int64]int64{{p.ID: 100, other.ID: 7}, {p.ID: 25, 999_999: 3}} {
+		if err := s.AddUsage(ctx, oct, counts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AddUsage(ctx, nov, map[int64]int64{p.ID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		id    int64
+		month time.Time
+		want  int64
+	}{{p.ID, oct, 125}, {other.ID, oct, 7}, {p.ID, nov, 1}, {other.ID, nov, 0}} {
+		if n, err := s.MonthUsage(ctx, c.id, c.month); err != nil || n != c.want {
+			t.Errorf("usage(%d, %s) = %d, %v; want %d", c.id, c.month.Format("2006-01"), n, err, c.want)
+		}
 	}
 }
 
@@ -443,5 +499,64 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 	if _, err := store.New(pool).CreateProject(ctx, "after-roundtrip", "p"); err != nil {
 		t.Fatalf("schema unusable after down+up: %v", err)
+	}
+}
+
+func TestDeleteExpired(t *testing.T) {
+	s, p := newProject(t)
+	ctx := context.Background()
+	now := time.Now()
+	var issueID int64
+	var ids []string
+	for i := 0; i < 3; i++ {
+		e := newEvent(p.ID, "RetentionError", 7)
+		res, err := s.SaveEvent(ctx, e, fingerprint.Compute(e))
+		if err != nil {
+			t.Fatal(err)
+		}
+		issueID = res.IssueID
+		ids = append(ids, e.EventID)
+	}
+	// Two of the three arrived 100 days ago.
+	if _, err := pool.Exec(ctx, `UPDATE events SET received_at = $1 WHERE event_id = ANY($2::uuid[])`, now.AddDate(0, 0, -100), ids[:2]); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another process is running retention: this one must skip, not wait
+	// or run alongside it.
+	other, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Exec(ctx, `SELECT pg_advisory_lock($1)`, 0x6a756a75)
+	if _, ran, err := s.DeleteExpired(ctx, now.AddDate(0, 0, -90), now, 1); err != nil || ran {
+		t.Fatalf("with the lock taken: ran=%v err=%v, want ran=false", ran, err)
+	}
+	other.Exec(ctx, `SELECT pg_advisory_unlock($1)`, 0x6a756a75)
+	other.Release()
+
+	// batch=1 makes it loop, which is the path big tables take.
+	d, ran, err := s.DeleteExpired(ctx, now.AddDate(0, 0, -90), now, 1)
+	if err != nil || !ran {
+		t.Fatalf("ran=%v err=%v", ran, err)
+	}
+	if d["events"] < 2 {
+		t.Errorf("deleted %d events, want at least this test's 2", d["events"])
+	}
+	var left []string
+	rows, _ := pool.Query(ctx, `SELECT event_id::text FROM events WHERE project_id = $1`, p.ID)
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		left = append(left, id)
+	}
+	if len(left) != 1 || left[0] != ids[2] {
+		t.Errorf("events left = %v, want only the recent %s", left, ids[2])
+	}
+	// The issue stays, with its count: if the bug comes back it's the same
+	// issue, and a resolved one is flagged as a regression.
+	var count int64
+	if err := pool.QueryRow(ctx, `SELECT event_count FROM issues WHERE id = $1`, issueID).Scan(&count); err != nil || count != 3 {
+		t.Errorf("issue after retention: event_count %d, %v; want it kept with 3", count, err)
 	}
 }

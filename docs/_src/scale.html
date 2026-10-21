@@ -1,0 +1,418 @@
+<title>juju Scale and Hardening</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column: the promise (202 means stored), a "what happens when" walkthrough of failures, the measured numbers, then each hardening feature, how to use it, what was checked, and limits. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #6d28d9;
+  --accent-soft: #f1ebfd;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --warn: #a35300;
+  --warn-soft: #fdf1e3;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2ff;
+    --code-bg: #1d242d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2ff;
+  --code-bg: #1d242d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section, .block { display: grid; gap: 16px; }
+section { gap: 22px; }
+.block { gap: 10px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-x: auto; white-space: nowrap; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+/* the kill -9 comparison */
+.vs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.vs .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 8px; align-content: start; }
+.big { font-family: var(--f-display); font-size: 2.4rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.big.bad { color: var(--bad); }
+.big.ok { color: var(--ok); }
+.bar { height: 10px; border-radius: 999px; background: var(--ok); position: relative; overflow: hidden; }
+.bar i { position: absolute; right: 0; top: 0; bottom: 0; background: var(--bad); }
+
+/* what happens when */
+.seg { display: inline-flex; max-width: 100%; border: 1px solid var(--line); border-radius: 999px; overflow-x: auto; scrollbar-width: none; }
+.seg button { white-space: nowrap; flex: none; font: inherit; font-size: 0.9rem; padding: 6px 14px; border: 0; background: var(--bg); color: var(--fg); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+/* Five choices: wrap onto more lines on phones rather than hide some off to the side. */
+.picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.picks button { font: inherit; font-size: 0.9rem; padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--fg); cursor: pointer; }
+.picks button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; }
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.stage { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--bg); display: grid; gap: 4px; align-content: start; min-width: 0; }
+.stage b { font-family: var(--f-mono); font-size: 0.78rem; }
+.stage span { font-size: 0.82rem; color: var(--muted); }
+.stage.down { border-color: var(--bad); background: var(--bad-soft); }
+.stage.down b { color: var(--bad); }
+.stage.busy { border-color: var(--warn); background: var(--warn-soft); }
+.stage.busy b { color: var(--warn); }
+@media (max-width: 560px) { .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.steps { display: grid; gap: 6px; counter-reset: s; padding: 0; list-style: none; max-width: none; }
+.steps li { display: grid; grid-template-columns: 1.8em minmax(0, 1fr); gap: 8px; font-size: 0.93rem; }
+.steps li::before { counter-increment: s; content: counter(s); font-family: var(--f-mono); font-size: 0.78rem; color: var(--muted); padding-top: 2px; }
+.outcome { font-family: var(--f-mono); font-size: 0.82rem; padding: 8px 12px; border-radius: 6px; background: var(--ok-soft); color: var(--ok); }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Six columns don't fit a phone: keep the rows readable and let the panel scroll sideways. */
+table.wide { min-width: 680px; }
+.del { color: var(--bad); text-decoration: line-through; }
+.ins { color: var(--ok); }
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix .mono { font-family: var(--f-mono); font-size: 0.8rem; color: var(--accent); }
+.fix p { font-size: 0.93rem; }
+footer { color: var(--muted); font-size: 0.9rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Phase 9 · Scale and hardening</span>
+    <h1>When juju says "got it", the event is safe</h1>
+    <p class="lede">Until now, an event ingest had accepted waited in memory for a worker. Restart the server at the wrong moment and it was gone, though the SDK had been told it arrived and had deleted its copy. Phase 9 puts a durable queue between ingest and the workers. It adds limits so one noisy app can't flood the server, removes personal data before anything is written, and deletes data once it's old.</p>
+    <div class="logline">[phase 9] <b>DONE</b> verified="kill -9 mid-flood: 0 of 57,700 accepted events lost (main lost 4,237 of 60,511); p99 1.3–21 ms at 5,000 events/s in four runs; Postgres down: ingest kept answering 202, event stored 17 s after it came back" tests="Go unit + integration (Postgres, ClickHouse, JetStream), 2 fuzzers, 165 JS, 74 Flutter"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The durable queue</span>
+    <h2>202 is a promise</h2>
+    <p>Ingest answers <code>202 Accepted</code>, and the SDK then deletes the event from its own queue. From that moment juju is the only place the event exists. So <code>202</code> must mean "this will be stored", not "this is in a Go channel and will be stored unless the process dies first".</p>
+    <p>The test: flood the server for 20 seconds from 16 threads, <code>kill -9</code> it 6 seconds in (no chance to shut down cleanly), start it again, and compare every event id that got a 202 with the ids in the database.</p>
+    <div class="vs">
+      <div class="card">
+        <span class="label">Before: main, in-memory channel</span>
+        <span class="big bad">4,237 lost</span>
+        <div class="bar" role="img" aria-label="4,237 of 60,511 accepted events lost, 7 percent"><i style="width:7%"></i></div>
+        <p class="note">60,511 events got a 202. 4,237 of them (7%) were in memory when the process died and never reached Postgres.</p>
+      </div>
+      <div class="card">
+        <span class="label">After: Phase 9, JetStream on disk</span>
+        <span class="big ok">0 lost</span>
+        <div class="bar" role="img" aria-label="0 of 57,700 accepted events lost"></div>
+        <p class="note">57,700 events got a 202, and 57,700 are stored: none missing, none twice. The restarted server found <code>waiting: 3956</code> in the queue and stored them all.</p>
+      </div>
+    </div>
+    <div class="block">
+      <h3>How it works</h3>
+      <ul>
+        <li>The queue is <b>NATS JetStream</b>, embedded in the juju binary and stored in <code>JUJU_DATA_DIR/queue</code>. A single server needs no new service to install or run.</li>
+        <li>Ingest answers 202 only after JetStream has acknowledged storing the event (<code>PubAck</code>).</li>
+        <li>A worker acknowledges an event only after it is in Postgres. If it crashes holding one, JetStream hands that event to a worker again after 30 s.</li>
+        <li>Each message carries the event's id as <code>Nats-Msg-Id</code>, so an SDK retrying the same batch within 2 minutes isn't queued twice. Postgres's primary key catches anything later.</li>
+        <li>A failing event is retried after 1 s, 5 s, 30 s, then every minute. After 50 tries it goes to a dead-letter stream (<code>JUJU_DEAD</code>, kept for 7 days) instead of blocking the queue forever.</li>
+      </ul>
+    </div>
+    <div class="why"><span class="label">Why JetStream, not Redis Streams</span>Both were on the roadmap. JetStream runs inside the Go binary, which keeps the one-server deploy at exactly one process plus Postgres. When ingest and workers need to be separate machines, the same code connects to a standalone NATS server instead. Redis would have been a new service to install, secure and back up on day one.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Try it</span>
+    <h2>What happens when…</h2>
+    <div class="panel" style="display:grid;gap:14px">
+      <div class="picks" role="group" aria-label="Failure">
+        <button type="button" data-case="crash" aria-pressed="true">The server is killed</button>
+        <button type="button" data-case="db" aria-pressed="false">Postgres goes down</button>
+        <button type="button" data-case="burst" aria-pressed="false">A burst arrives</button>
+        <button type="button" data-case="full" aria-pressed="false">The queue fills up</button>
+        <button type="button" data-case="poison" aria-pressed="false">One event always fails</button>
+      </div>
+      <div class="flow" id="flow" aria-live="polite"></div>
+      <ol class="steps" id="steps"></ol>
+      <div class="outcome" id="outcome"></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Measured</span>
+    <h2>p99 under 50 ms in every run</h2>
+    <p>The roadmap's target: ingest keeps its 99th-percentile response under 50 ms at a target rate. The test is <a href="https://k6.io">k6</a> with a <b>constant arrival rate</b>: it starts requests on schedule whether or not earlier ones have answered. A closed loop, where each user waits for its reply, quietly slows down when the server does, and hides exactly the latency being measured. Each request is a batch of 10 errors, as an SDK flushes them.</p>
+    <div class="panel" style="padding:0">
+      <table class="wide">
+        <thead><tr><th>Run</th><th>Accepted</th><th>p50</th><th>p95</th><th>p99</th><th>Did the 2 workers keep up?</th></tr></thead>
+        <tbody>
+          <tr><td>5,000 events/s, 30 s<br><span class="note">first run, 0.4M rows</span></td><td class="num">100%</td><td class="num">0.42 ms</td><td class="num">0.74 ms</td><td class="num"><b>2.2 ms</b></td><td>Yes: the queue stayed empty</td></tr>
+          <tr><td>20,000 events/s, 20 s<br><span class="note">4× the target</span></td><td class="num">100%</td><td class="num">0.41 ms</td><td class="num">3.6 ms</td><td class="num"><b>15 ms</b></td><td>No, and that's the point: they stored ~3,200/s, the rest waited on disk (221 MB) and all 398,680 were stored 77 s after the end</td></tr>
+          <tr><td>5,000 events/s, 60 s<br><span class="note">final code, load average 13</span></td><td class="num">100%</td><td class="num">0.39 ms</td><td class="num">1.9 ms</td><td class="num"><b>21 ms</b></td><td>Not quite: 74% stored live, the rest from the queue right after</td></tr>
+          <tr><td>5,000 events/s, 30 s<br><span class="note">final code, 1.1M rows, load average 10–12</span></td><td class="num">100%</td><td class="num">0.35 ms</td><td class="num">0.56 ms</td><td class="num"><b>1.3 ms</b></td><td>Not quite: 83% live, 18 MB queued, all 150,010 stored right after</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Ingest doesn't wait for Postgres at all, which is why its latency barely moves when the workers fall behind. The workers are the real limit. They slowed down as the table grew past a million rows and gained an index (each insert updates every index), on a laptop busy with other work. When that happens, events wait on disk instead of being refused or lost, and <code>JUJU_WORKERS</code> or another worker process adds throughput.</p>
+    <p class="note">Measured on an 8-core MacBook with k6, juju and Postgres on the same machine, and other programs running (load average 10–13 in the last two runs). The 21 ms run was the busiest. A dedicated server should do better, but these are the numbers measured. Run it yourself with <code>make loadtest</code>.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Split deployment</span>
+    <h2>Ingest, workers and the dashboard can run apart</h2>
+    <p>One process runs everything by default. <code>JUJU_ROLES</code> picks the parts, so ingest can scale on its own, or a slow dashboard query can't touch the endpoint apps send to:</p>
+    <pre class="code"><span class="c"># three processes, one shared NATS JetStream server (nats-server -js)</span>
+JUJU_ROLES=ingest      JUJU_NATS_URL=nats://nats:4222 juju serve  <span class="c"># POST /api/v1/.../events only</span>
+JUJU_ROLES=worker      JUJU_NATS_URL=nats://nats:4222 juju serve  <span class="c"># stores events, alerts, retention</span>
+JUJU_ROLES=api         JUJU_NATS_URL=nats://nats:4222 juju serve  <span class="c"># dashboard and read API</span></pre>
+    <p>Live updates travel the same way. The worker that stores an event publishes <code>juju.live.&lt;project&gt;</code> on NATS, and every API process passes it to the browsers watching that project. Before, this only worked inside one process: Phase 7's limits listed it as not done yet.</p>
+    <div class="why"><span class="label">Why it refuses to start without NATS</span>The embedded queue lives inside one process. <code>JUJU_ROLES=ingest</code> on its own would queue events that no worker can ever see. juju exits at startup with the reason instead of accepting events it will never store.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Rate limits and quotas</span>
+    <h2>One app can't take the server down for everyone</h2>
+    <p>An app stuck in an error loop on a million phones can send more than the server stores. Each project gets two limits:</p>
+    <ul>
+      <li><b>A rate limit</b> (default 1,000 events/s) as a <b>token bucket</b>. Tokens refill at the rate, up to 5 seconds' worth, and each event spends one. The burst is there because SDKs send in batches, and a phone that was offline sends its backlog all at once.</li>
+      <li><b>A monthly quota</b> (none by default), counted in Postgres as events accepted per calendar month.</li>
+    </ul>
+    <p>Over either one, ingest answers <code>429</code> with <code>Retry-After</code>, and all three SDKs already keep the events and wait that long. The rate limit asks for the seconds until enough tokens are back. The quota asks for one hour, not "next month", so a raised quota takes effect within the hour.</p>
+    <pre class="code">$ juju project limits -id 1 -rate 10
+<span class="c">  rate limit: 10 events/s</span>
+$ <span class="c"># 100 events (the burst), then 5 more right away, then 5 after a second</span>
+202 {"accepted":100}
+429 Retry-After: 1 {"error":"rate limit exceeded"}
+202 {"accepted":5}</pre>
+    <div class="why"><span class="label">Why a refused batch gives its tokens back</span>When the queue itself refuses a batch, the SDK will resend it. If the tokens stayed spent, the same events would use the allowance twice. A test caught this: the test expected <code>Retry-After: 1</code> and got <code>3</code>.</div>
+    <div class="why"><span class="label">Why counts are flushed, not written per request</span>Updating a usage row on every request would make one Postgres row the hottest spot in the system. Ingest counts in memory and adds to <code>project_usage</code> every 5 seconds and at shutdown. Adding, not setting, is what lets several ingest processes share one count.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">PII scrubbing</span>
+    <h2>Personal data is removed before it's written anywhere</h2>
+    <p>Apps send personal data by accident all the time: an email in an error message, a password-reset token in a URL a breadcrumb recorded, an <code>Authorization</code> header copied into context. juju removes it <b>at ingest, before the queue</b>, so it never reaches the queue's files, Postgres or ClickHouse. Scrubbing in the worker would have left it sitting in the queue on disk.</p>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>Where</th><th>Sent</th><th>Stored</th></tr></thead>
+        <tbody>
+          <tr><td>Error message</td><td class="mono">no account for grace.hopper@navy.mil</td><td class="mono">no account for [email]</td></tr>
+          <tr><td>Breadcrumb URL</td><td class="mono">…/session?access_token=abc123secret&amp;next=/cart</td><td class="mono">…/session?access_token=[Filtered]&amp;next=/cart</td></tr>
+          <tr><td>Context header</td><td class="mono">Authorization: Bearer sk_live_9f8e…</td><td class="mono">Authorization: [Filtered]</td></tr>
+          <tr><td>user.email</td><td class="mono">grace.hopper@navy.mil</td><td class="mono">grace.hopper@navy.mil <span class="note">(kept: set on purpose)</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>It also catches JWTs, OAuth <code>?code=</code>, S3 signatures, and any value under keys like <code>password</code>, <code>cookie</code> or <code>api_key</code>. It leaves alone the fields an app fills in to say who the user is (<code>user.*</code>, <code>distinct_id</code>), stack frames, and look-alikes: <code>@babel/core</code>, <code>/tokenizer?mode=fast</code>, "the bearer of bad news". Each event records how many values were scrubbed, never what they were. A fuzzer checks that scrubbing never crashes and that a second pass finds nothing left.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Retention</span>
+    <h2>Old data is deleted on a schedule</h2>
+    <ul>
+      <li><b>Postgres</b>: error events, app sessions, transactions and alert deliveries older than <code>JUJU_RETENTION_DAYS</code> (90) are deleted every hour, along with expired logins and invites. <b>Issues stay</b>, with their counts, so an old bug that comes back is still recognised as a regression.</li>
+      <li><b>ClickHouse</b>: analytics events older than <code>JUJU_ANALYTICS_RETENTION_DAYS</code> (365) are dropped by ClickHouse itself, through a table <code>TTL</code>.</li>
+    </ul>
+    <div class="why"><span class="label">Why 5,000 rows at a time</span>One huge <code>DELETE</code> holds its locks and writes WAL for minutes while ingest is writing to the same tables. Small batches each finish in milliseconds. A Postgres advisory lock means that with several workers only one deletes, and the others skip that hour instead of fighting over the same rows.</div>
+    <div class="why"><span class="label">Why the new indexes are built CONCURRENTLY</span>Deleting by age needs an index on the time column. A plain <code>CREATE INDEX</code> blocks writes for as long as it builds, so the deploy that adds it would stall ingest. <code>CONCURRENTLY</code> builds it alongside writes. On the test database it took 0.85 s for 808,000 events.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Defaults that are safe, and the knobs</h2>
+    <p>Nothing to do for a single server: the queue is embedded, and the defaults below apply. They go in <code>/etc/juju/juju.env</code>:</p>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>Setting</th><th>Default</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">JUJU_RATE_LIMIT</td><td class="mono">1000</td><td>events/s per project without its own limit; 0 turns the default off</td></tr>
+          <tr><td class="mono">JUJU_RETENTION_DAYS</td><td class="mono">90</td><td>errors, sessions, transactions; 0 keeps them</td></tr>
+          <tr><td class="mono">JUJU_ANALYTICS_RETENTION_DAYS</td><td class="mono">365</td><td>analytics events in ClickHouse; 0 keeps them</td></tr>
+          <tr><td class="mono">JUJU_SCRUB_PII</td><td class="mono">true</td><td>false stores events exactly as sent</td></tr>
+          <tr><td class="mono">JUJU_QUEUE_MAX_MB</td><td class="mono">1024</td><td>queue size on disk; past it, ingest answers 429</td></tr>
+          <tr><td class="mono">JUJU_ROLES</td><td class="mono">ingest,worker,api</td><td>which parts this process runs</td></tr>
+          <tr><td class="mono">JUJU_NATS_URL</td><td class="mono">(embedded)</td><td>a shared NATS JetStream; needed to split roles</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <pre class="code"><span class="c"># per project; a flag left out keeps its value, no flags just shows them</span>
+juju project limits -id 1 -rate 500 -quota 5000000
+juju project limits -id 1 -rate default -quota none
+
+<span class="c">// SDKs: send a share of errors (sessions still count every one)</span>
+juju.init({ dsn, sampleRate: 0.25 })                     <span class="c">// web, React Native</span>
+Juju.init(JujuOptions(dsn: dsn, sampleRate: 0.25))       <span class="c">// Flutter</span></pre>
+    <div class="why"><span class="label">Why sessions are never sampled</span>The crash-free rate is crashed sessions over all sessions. Sample those and the rate is wrong. So <code>sampleRate</code> drops error <i>reports</i>, while the session still counts the error. Analytics events aren't sampled either: a funnel built from a quarter of its steps isn't a funnel.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked</h2>
+    <p>Against a running juju with Postgres, with the queue on disk, and every result read back from the database.</p>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>kill -9 mid-flood, main</td><td class="mono">60,511 accepted, 4,237 never stored</td></tr>
+          <tr><td>kill -9 mid-flood, Phase 9</td><td class="mono">57,700 accepted, 57,700 stored, 0 twice; 3,956 waiting at restart</td></tr>
+          <tr><td>Load, 5,000 events/s</td><td class="mono">four runs: p99 2.2, 21, 1.3 ms (and 15 ms at 20,000/s); 100% 202; every accepted event stored</td></tr>
+          <tr><td>Load, 20,000 events/s</td><td class="mono">p99 15 ms; backlog 221 MB on disk; 398,680 stored 77 s later, exactly the number accepted</td></tr>
+          <tr><td>Postgres down past the 30 s cache</td><td class="mono">ingest 202 (project from cache); event on disk scrubbed, 0 files with the raw email or token; stored 17 s after Postgres came back</td></tr>
+          <tr><td>Rate limit 10/s</td><td class="mono">100 → 202 · 5 → 429 Retry-After: 1 · 1 s later 5 → 202</td></tr>
+          <tr><td>Quota 200/month</td><td class="mono">206 used (last batch let in whole) → 429 Retry-After: 3600; still 429 after a restart</td></tr>
+          <tr><td>Three processes</td><td class="mono">ingest :8099 → worker :8096 → api :8097: 150 of 150 stored; new issue pushed to a browser stream on the API process; each refuses the others' routes (404)</td></tr>
+          <tr><td>Migrations</td><td class="mono">00006 limits, 00007 three indexes built concurrently in 0.85 s on 808k events; up, down, up on a fresh database</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>What testing exposed</h3>
+    <div class="fixes">
+      <div class="fix"><span class="mono">sessions that never became healthy</span><p>The Phase 8 end-to-end test timed out. Fields the server computes (a session's start, a transaction's start) are marked <code>json:"-"</code>, so they vanished in the JSON trip through the queue. The old channel passed Go objects and hid it. Now they're rebuilt after the queue, and a test compares every field before and after.</p></div>
+      <div class="fix"><span class="mono">tokens spent twice</span><p>A batch the queue refused still used up its rate-limit tokens, though the SDK would resend it. The test's <code>Retry-After: 3</code> instead of <code>1</code> showed it. Refused batches now give their tokens back.</p></div>
+      <div class="fix"><span class="mono">503 during a database outage</span><p>The first outage test got <code>503</code>: checking the project key needed Postgres, which defeated the point of the queue. The cache now serves the last known project when Postgres can't be reached.</p></div>
+      <div class="fix"><span class="mono">"insufficient storage"</span><p>JetStream reserves each stream's full size up front, so the dead-letter stream didn't fit next to the main one. The store limit now covers both.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>Not covered yet</h2>
+    <ul>
+      <li><strong>Power loss</strong>: a crash or <code>kill -9</code> loses nothing, because the operating system still writes what JetStream handed it. A power cut can lose events accepted in roughly the last 2 minutes, which is JetStream's default interval for forcing data to disk. Syncing every write would cost latency on every request.</li>
+      <li><strong>Rate limits are per ingest process</strong>: three ingest replicas allow up to three times a project's rate. The quota is shared, but each replica sees the others' counts only every few seconds.</li>
+      <li><strong>Limits have no dashboard screen</strong> yet: set them with <code>juju project limits</code>.</li>
+      <li><strong>Retention is one setting for the whole server</strong>, not per project, and ClickHouse drops data in whole months.</li>
+      <li><strong>Stack frames aren't scrubbed</strong>: a signed CDN URL in a script's filename stays as sent, because source maps are matched by it.</li>
+      <li><strong>One NATS server</strong>: a split deployment's queue is a single machine. A 3-node JetStream cluster would remove that, with no code change.</li>
+      <li><strong>/readyz checks Postgres</strong>, so a load balancer would take an ingest-only process out of rotation during a database outage, even though it could keep accepting.</li>
+    </ul>
+  </section>
+
+  <footer>Part of the juju project docs. See the <a href="https://francisije.github.io/juju/">roadmap</a>, <a href="https://francisije.github.io/juju/performance.html">performance and sessions</a>, <a href="https://francisije.github.io/juju/analytics.html">product analytics</a>, and the <a href="https://francisije.github.io/juju/web-sdk.html">web</a>, <a href="https://francisije.github.io/juju/react-native-sdk.html">React Native</a> and <a href="https://francisije.github.io/juju/flutter-sdk.html">Flutter</a> SDK pages.</footer>
+</div>
+
+<script>
+(function () {
+  // Each case walks an event through ingest → queue → worker → Postgres.
+  // The steps are what the code does (server/internal/queue, worker, ingest).
+  var stages = ["ingest", "queue (disk)", "worker", "Postgres"];
+  var cases = {
+    crash: {
+      state: { 0: "down", 2: "down" },
+      notes: ["killed", "events stay in the files", "killed mid-event", "fine"],
+      steps: [
+        "The server is killed with kill -9 while events are flowing. Nothing gets to run: no shutdown code, no flush.",
+        "Events that got a 202 were already in JetStream's files, which the operating system writes to disk even after the process is gone.",
+        "A worker had taken an event but not acknowledged it. JetStream still counts it as unacknowledged.",
+        "On restart, JetStream reads its files back, and the unacknowledged event is delivered again after its 30 s ack window.",
+        "If it had been stored just before the crash, the second insert is a no-op: the event id is the primary key."
+      ],
+      outcome: "Measured: 57,700 accepted, 57,700 stored, 0 twice."
+    },
+    db: {
+      state: { 3: "down", 2: "busy" },
+      notes: ["still answers 202", "fills up on disk", "retrying", "down"],
+      steps: [
+        "Postgres stops. Ingest doesn't write to it: it checks the project's key from its cache, which serves the last known answer when Postgres can't be reached.",
+        "Ingest keeps answering 202, and accepted events wait in the queue on disk.",
+        "Workers fail to store and retry after 1 s, 5 s, 30 s, then every minute. A retry isn't an acknowledgement, so the event stays queued.",
+        "Postgres comes back. The next retry succeeds, and the worker acknowledges."
+      ],
+      outcome: "Measured: 202 with Postgres down past the 30 s cache; stored 17 s after it came back."
+    },
+    burst: {
+      state: { 1: "busy" },
+      notes: ["p99 15 ms", "backlog grows", "full speed", "steady"],
+      steps: [
+        "A burst arrives: four times the target rate, 20,000 events a second.",
+        "Ingest only writes to the queue, so its latency hardly changes.",
+        "Workers can't keep up and store what they can, about 3,200 a second with 2 workers. The rest waits on disk.",
+        "When the burst ends, the workers drain the backlog. Add workers (JUJU_WORKERS) or worker processes to drain faster."
+      ],
+      outcome: "Measured: 221 MB of backlog, all 398,680 events stored 77 s after the burst."
+    },
+    full: {
+      state: { 1: "down" },
+      notes: ["429 Retry-After: 5", "at JUJU_QUEUE_MAX_MB", "behind", "slow or down"],
+      steps: [
+        "The workers have been behind for a long time, say Postgres has been down for hours, and the queue reaches JUJU_QUEUE_MAX_MB.",
+        "JetStream refuses new messages instead of throwing old ones away (DiscardNew): what was accepted is never dropped.",
+        "Ingest turns the refusal into 429 with Retry-After: 5. A refused batch gives back its rate-limit tokens.",
+        "The SDKs keep the events and retry. The disk never fills, and nothing accepted is lost."
+      ],
+      outcome: "Tested with a 4 KB queue: the batch that doesn't fit gets 429."
+    },
+    poison: {
+      state: { 2: "busy" },
+      notes: ["202", "redelivers", "fails every time", "fine"],
+      steps: [
+        "An event makes the worker fail every time: a bug, or data the store rejects.",
+        "Each failure is a retry with a growing delay, so it never spins the CPU.",
+        "Other events keep flowing past it. One bad event doesn't block the queue.",
+        "After 50 tries it moves to JUJU_DEAD, kept for 7 days with the reason, where it can be read and replayed."
+      ],
+      outcome: "Covered by TestJetStreamRetryAndDeadLetter and TestGivesUpAfterMaxAttempts."
+    }
+  };
+  var flow = document.getElementById("flow");
+  var steps = document.getElementById("steps");
+  var outcome = document.getElementById("outcome");
+  function render(name) {
+    var c = cases[name];
+    flow.textContent = "";
+    stages.forEach(function (s, i) {
+      var d = document.createElement("div");
+      d.className = "stage" + (c.state[i] ? " " + c.state[i] : "");
+      var b = document.createElement("b"); b.textContent = s;
+      var n = document.createElement("span"); n.textContent = c.notes[i];
+      d.append(b, n);
+      flow.append(d);
+    });
+    steps.textContent = "";
+    c.steps.forEach(function (t) { var li = document.createElement("li"); li.textContent = t; steps.append(li); });
+    outcome.textContent = c.outcome;
+    document.querySelectorAll("[data-case]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.case === name)); });
+  }
+  document.querySelectorAll("[data-case]").forEach(function (b) { b.addEventListener("click", function () { render(b.dataset.case); }); });
+  render("crash");
+})();
+</script>
