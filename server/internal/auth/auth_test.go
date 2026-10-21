@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,10 @@ import (
 func TestMain(m *testing.M) {
 	// Production strength isn't what these tests check; speed is welcome.
 	bcryptCost = bcrypt.MinCost
+	// dummyHash (checked for unknown emails) was made at production cost
+	// when the package loaded; remake it, or each unknown email costs a
+	// real quarter second.
+	dummyHash, _ = bcrypt.GenerateFromPassword([]byte("test"), bcryptCost)
 	m.Run()
 }
 
@@ -116,12 +121,52 @@ func TestWrongPasswordAndUnknownEmailLookTheSame(t *testing.T) {
 
 func TestLoginRateLimit(t *testing.T) {
 	s := &Service{Store: newFake(t)}
-	for range maxAttempts {
-		_, _ = login(t, s, "ada@example.com", "guess")
+	for range 10 {
+		_, _ = loginFrom(t, s, "ada@example.com", "guess", "203.0.113.66")
 	}
-	if _, err := login(t, s, "ada@example.com", "correct horse battery"); err != ErrTooManyAttempts {
+	if _, err := loginFrom(t, s, "ada@example.com", "correct horse battery", "203.0.113.66"); err != ErrTooManyAttempts {
 		t.Fatalf("err = %v: the 11th attempt must be refused even with the right password", err)
 	}
+	// The attacker's guesses must not lock Ada out: she logs in from her
+	// own address. (Keyed on the email alone, they did.)
+	if _, err := loginFrom(t, s, "ada@example.com", "correct horse battery", "198.51.100.7"); err != nil {
+		t.Fatalf("err = %v: someone else's wrong guesses locked the real user out", err)
+	}
+}
+
+// One address trying one password against many accounts (spraying) is
+// stopped too, though it never tries any one account twice.
+func TestLoginRateLimitPerAddress(t *testing.T) {
+	s := &Service{Store: newFake(t)}
+	for i := range 50 {
+		if _, err := loginFrom(t, s, fmt.Sprintf("user%d@example.com", i), "Password123!", "203.0.113.66"); err != ErrBadLogin {
+			t.Fatalf("attempt %d: err = %v", i+1, err)
+		}
+	}
+	if _, err := loginFrom(t, s, "user99@example.com", "Password123!", "203.0.113.66"); err != ErrTooManyAttempts {
+		t.Fatalf("err = %v: the 51st failure from one address must be refused", err)
+	}
+	if _, err := loginFrom(t, s, "ada@example.com", "correct horse battery", "198.51.100.7"); err != nil {
+		t.Fatalf("another address must be unaffected: %v", err)
+	}
+}
+
+// Successful logins don't count: a whole office behind one address can
+// log in all day.
+func TestSuccessfulLoginsDontCount(t *testing.T) {
+	s := &Service{Store: newFake(t)}
+	for i := range 100 {
+		if _, err := loginFrom(t, s, "ada@example.com", "correct horse battery", "203.0.113.10"); err != nil {
+			t.Fatalf("login %d: %v", i+1, err)
+		}
+	}
+}
+
+func loginFrom(t *testing.T, s *Service, email, pw, ip string) (*http.Cookie, error) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	_, err := s.Login(context.Background(), rec, email, pw, ip)
+	return nil, err
 }
 
 func TestMiddleware(t *testing.T) {

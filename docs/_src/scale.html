@@ -271,6 +271,7 @@ $ <span class="c"># 100 events (the burst), then 5 more right away, then 5 after
           <tr><td class="mono">JUJU_QUEUE_MAX_MB</td><td class="mono">1024</td><td>queue size on disk; past it, ingest answers 429</td></tr>
           <tr><td class="mono">JUJU_ROLES</td><td class="mono">ingest,worker,api</td><td>which parts this process runs</td></tr>
           <tr><td class="mono">JUJU_NATS_URL</td><td class="mono">(embedded)</td><td>a shared NATS JetStream; needed to split roles</td></tr>
+          <tr><td class="mono">JUJU_TRUSTED_PROXIES</td><td class="mono">127.0.0.1,::1</td><td>proxies whose <code>X-Forwarded-For</code> is believed, so login and sign-up limits see each visitor's real address</td></tr>
         </tbody>
       </table>
     </div>
