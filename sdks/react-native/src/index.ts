@@ -78,6 +78,7 @@ export function init(options: ReactNativeOptions): void {
   if (options.tracesSampleRate !== undefined) clientOptions.tracesSampleRate = options.tracesSampleRate;
   if (options.storage) {
     clientOptions.persistence = asyncStorageQueue(options.storage);
+    clientOptions.identityStorage = options.storage; // the anonymous id, so one install stays one person
   } else {
     warn("[juju] init() was called without storage, so a crash can be lost before it's sent. Pass AsyncStorage: init({ dsn, storage: AsyncStorage })");
   }
@@ -104,6 +105,24 @@ export function init(options: ReactNativeOptions): void {
 /** Report an error the app caught. Returns the event_id, or "" if not sent. */
 export function captureException(error: unknown, extra?: { tags?: Record<string, string> }): string {
   return client?.captureException(error, extra) ?? "";
+}
+
+/**
+ * Records something a user did, for product analytics:
+ * capture("checkout_started", { plan: "pro" }).
+ */
+export function capture(name: string, properties?: Record<string, unknown>): void {
+  client?.capture(name, properties);
+}
+
+/** After login: events from this device so far, and from now on, belong to userId. */
+export function identify(userId: string): void {
+  client?.identify(userId);
+}
+
+/** After logout: forget the user, so whoever uses the device next is a new person. */
+export function reset(): void {
+  client?.reset();
 }
 
 export function setUser(user: User | null): void {

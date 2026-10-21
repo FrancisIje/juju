@@ -55,6 +55,9 @@ export function Shell({ projectId, children }: { projectId: number | null; child
         { id: "go-issues", group: "Go to", label: "Issues", hint: "g i", run: () => navigate(`${base}/issues`) },
         { id: "go-releases", group: "Go to", label: "Releases: crash-free sessions", hint: "g r", run: () => navigate(`${base}/releases`) },
         { id: "go-performance", group: "Go to", label: "Performance: page loads, app starts, screens", hint: "g p", run: () => navigate(`${base}/performance`) },
+        { id: "go-analytics", group: "Go to", label: "Analytics: Trends", hint: "g a", run: () => navigate(`${base}/analytics/trends`) },
+        { id: "go-funnels", group: "Go to", label: "Analytics: Funnels", run: () => navigate(`${base}/analytics/funnels`) },
+        { id: "go-retention", group: "Go to", label: "Analytics: Retention", run: () => navigate(`${base}/analytics/retention`) },
         { id: "go-setup", group: "Go to", label: "Settings: Setup and DSN", hint: "g s", run: () => navigate(`${base}/settings/setup`) },
         { id: "go-alerts", group: "Go to", label: "Settings: Alerts", run: () => navigate(`${base}/settings/alerts`) },
         { id: "go-keys", group: "Go to", label: "Settings: Keys", run: () => navigate(`${base}/settings/keys`) },
@@ -88,7 +91,7 @@ export function Shell({ projectId, children }: { projectId: number | null; child
         pendingG.current = Date.now();
         return;
       }
-      const go = Date.now() - pendingG.current < 800 && base ? { i: `${base}/issues`, r: `${base}/releases`, p: `${base}/performance`, s: `${base}/settings/setup` }[e.key] : undefined;
+      const go = Date.now() - pendingG.current < 800 && base ? { i: `${base}/issues`, r: `${base}/releases`, p: `${base}/performance`, a: `${base}/analytics/trends`, s: `${base}/settings/setup` }[e.key] : undefined;
       pendingG.current = 0;
       if (go) {
         e.preventDefault();
@@ -134,6 +137,7 @@ export function Shell({ projectId, children }: { projectId: number | null; child
             {nav(`${base}/issues`, current.name, current.unresolved)}
             {nav(`${base}/releases`, "Releases")}
             {nav(`${base}/performance`, "Performance")}
+            {nav(`${base}/analytics`, "Analytics")}
             {nav(`${base}/settings`, "Settings")}
           </div>
         )}

@@ -79,7 +79,22 @@ jobs:
         with:
           path: ~/.embedded-postgres-go
           key: embedded-postgres-v17-${{ runner.os }}
+      # ClickHouse for the analytics tests: the same pinned build, from the
+      # same script, as `make devch` on a laptop (checked against its
+      # published SHA-512). One instance serves every test package; each
+      # test uses a database of its own.
+      - name: Cache ClickHouse
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/juju
+          key: clickhouse-${{ hashFiles('scripts/devch.sh') }}-${{ runner.os }}
+      - name: Start ClickHouse
+        run: |
+          (../scripts/devch.sh /tmp/juju-ch > /tmp/clickhouse.log 2>&1 &)
+          timeout 300 sh -c 'until curl -sf http://127.0.0.1:8123/ping; do sleep 1; done'
       - name: Integration tests
+        env:
+          JUJU_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
         run: go test -race -count=1 -tags=integration ./...
       - name: Fuzz the event parser
         run: go test ./internal/event -run='^$' -fuzz=FuzzNormalize -fuzztime=20s
@@ -123,16 +138,23 @@ jobs:
           key: embedded-postgres-v17-${{ runner.os }}
       - name: Build the dashboard into the server
         run: make dashboard && (cd server && go build -o juju ./cmd/juju)
-      - name: Start Postgres, the server and a fake Slack
+      - name: Cache ClickHouse
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/juju
+          key: clickhouse-${{ hashFiles('scripts/devch.sh') }}-${{ runner.os }}
+      - name: Start Postgres, ClickHouse, the server and a fake Slack
         run: |
+          (scripts/devch.sh /tmp/juju-ch > /tmp/clickhouse.log 2>&1 &)
+          timeout 300 sh -c 'until curl -sf http://127.0.0.1:8123/ping; do sleep 1; done' 
           (cd server && go run ./cmd/devdb -dir /tmp/juju-db > /tmp/devdb.log 2>&1 &)
           timeout 120 sh -c 'until grep -q "postgres ready" /tmp/devdb.log; do sleep 1; done'
           python3 dashboard/e2e/fake-slack.py &
-          (cd server && JUJU_ALLOW_HTTP_WEBHOOKS=true JUJU_DATA_DIR=/tmp/juju-data ./juju serve > /tmp/juju.log 2>&1 &)
+          (cd server && JUJU_ALLOW_HTTP_WEBHOOKS=true JUJU_DATA_DIR=/tmp/juju-data JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123 ./juju serve > /tmp/juju.log 2>&1 &)
           timeout 30 sh -c 'until curl -sf localhost:8080/healthz; do sleep 1; done'
       - name: Playwright
         working-directory: dashboard
-        run: JUJU_E2E_SLACK=http://127.0.0.1:9911/hook npm run e2e
+        run: JUJU_E2E_SLACK=http://127.0.0.1:9911/hook JUJU_E2E_ANALYTICS=1 npm run e2e
       - name: Server log
         if: failure()
         run: cat /tmp/juju.log

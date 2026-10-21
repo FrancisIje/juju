@@ -99,7 +99,7 @@ describe("the next launch", () => {
     expect(stored).toEqual([old]); // not overwritten yet: the save waits for the load
     finishLoad([old]);
     await c.persistNow();
-    expect(stored.map((e) => (e as JujuEvent).exception.message)).toEqual(["from last launch", "right at launch"]);
+    expect((stored as JujuEvent[]).map((e) => e.exception.message)).toEqual(["from last launch", "right at launch"]);
   });
 
   it("ignores saved events already in the queue, and garbage in storage", async () => {

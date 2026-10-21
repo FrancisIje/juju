@@ -68,6 +68,7 @@ func TestNormalizeRejects(t *testing.T) {
 		{"event_id not a uuid", with(func(m map[string]any) { m["event_id"] = "abc" }), "event_id"},
 		{"nil uuid", with(func(m map[string]any) { m["event_id"] = "00000000-0000-0000-0000-000000000000" }), "event_id"},
 		{"unknown type", with(func(m map[string]any) { m["type"] = "profile" }), "type"},
+		{"another unknown type", with(func(m map[string]any) { m["type"] = "pageview" }), "type"},
 		{"missing exception", with(func(m map[string]any) { delete(m, "exception") }), "exception"},
 		{"exception without type or message", with(func(m map[string]any) {
 			m["exception"] = map[string]any{"type": " ", "message": ""}
@@ -287,6 +288,8 @@ func FuzzNormalize(f *testing.F) {
 	f.Add(session)
 	transaction, _ := json.Marshal(validTransaction())
 	f.Add(transaction)
+	f.Add([]byte(`{"event_id":"` + validID + `","type":"event","name":"signup","distinct_id":"a","properties":{"n":1,"o":{"x":[1,null]},"":true}}`))
+	f.Add([]byte(`{"event_id":"` + validID + `","type":"identify","distinct_id":"u1","anon_id":"a"}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		e, err := Normalize(raw, now)
 		if err != nil {
@@ -297,10 +300,22 @@ func FuzzNormalize(f *testing.F) {
 		}
 		// Exactly one payload, the one matching the type.
 		switch {
-		case e.Type == TypeError && (e.Exception == nil || e.Session != nil || e.Transaction != nil),
-			e.Type == TypeSession && (e.Session == nil || e.Exception != nil || e.Transaction != nil),
-			e.Type == TypeTransaction && (e.Transaction == nil || e.Exception != nil || e.Session != nil):
+		case e.Type == TypeError && (e.Exception == nil || e.Session != nil || e.Transaction != nil || e.DistinctID != ""),
+			e.IsAnalytics() && (e.Exception != nil || e.Session != nil || e.Transaction != nil),
+			e.Type == TypeSession && (e.Session == nil || e.Exception != nil || e.Transaction != nil || e.DistinctID != ""),
+			e.Type == TypeTransaction && (e.Transaction == nil || e.Exception != nil || e.Session != nil || e.DistinctID != ""):
 			t.Fatalf("type %q with the wrong payload: %+v", e.Type, e)
+		}
+		if e.IsAnalytics() {
+			// Analytics: someone did it, and every property is short text.
+			if e.DistinctID == "" || len(e.Properties) > maxProperties {
+				t.Fatalf("analytics rules not enforced: %+v", e)
+			}
+			for k, v := range e.Properties {
+				if s, ok := v.(string); !ok || len(s) > maxPropertyValue || len(k) > maxPropertyKey {
+					t.Fatalf("property %q = %#v", k, v)
+				}
+			}
 		}
 		if ex := e.Exception; ex != nil {
 			if len(ex.Message) > maxMessageBytes {

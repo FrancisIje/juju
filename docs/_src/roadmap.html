@@ -103,7 +103,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <span class="eyebrow">Project plan · Go · started Oct 2026</span>
     <h1>juju roadmap</h1>
     <p class="lede">Error tracking (like Sentry) and product analytics (like PostHog) in one Go backend, with SDKs for Flutter, React Native and the web. This page sets the order to build it in and explains the reason behind each choice.</p>
-    <div class="logline">[2026-10-21T01:00:00Z] <b>INFO</b> phase=8 status=done msg="sessions, crash-free rate per release, transactions and spans in all three SDKs; a forced crash on iOS and Android release builds lowered the rate; stored in Postgres ahead of phase 7"</div>
+    <div class="logline">[2026-10-21T01:00:00Z] <b>INFO</b> phase=8 status=done msg="sessions, crash-free rate per release, transactions and spans in all three SDKs; a forced crash on iOS and Android release builds lowered the rate; with phase 7 merged too, next: scale and hardening"</div>
   </header>
 
   <section>
@@ -289,15 +289,16 @@ flowchart LR
         <div class="done"><span class="label">Done when</span>You fix a bug, resolve its issue, throw the error again, and get a regression alert in Slack. Verified end to end in Chrome against a local Slack stand-in; a real workspace is next.</div>
       </article>
 
-      <article class="phase next">
-        <div class="phase-head"><span class="phase-num">Phase 7</span><h3>Product analytics</h3><span class="pill next">Next</span></div>
+      <article class="phase done-phase">
+        <div class="phase-head"><span class="phase-num">Phase 7</span><h3>Product analytics</h3><span class="pill done">Done</span></div>
         <ul>
           <li><code>capture("checkout_started", props)</code>, <code>identify</code>, and merging anonymous users into known users</li>
           <li>Add ClickHouse for raw events. Postgres keeps the metadata</li>
           <li>Trends (count over time by property) first, then funnels and retention</li>
         </ul>
         <div class="whynow"><span class="label">Why now</span>Analytics events outnumber errors by 100× or more. This is the point where a columnar database pays for its extra setup.</div>
-        <div class="done"><span class="label">Done when</span>A trend chart of a custom event, broken down by platform, matches what the example apps sent.</div>
+        <p><a href="https://francisije.github.io/juju/analytics.html">See the analytics screens, how people are counted, and how it was verified →</a></p>
+        <div class="done"><span class="label">Done when</span>A trend chart of a custom event, broken down by platform, matches what the example apps sent. Verified: Web 3, Flutter 3, React Native 2, from release builds.</div>
       </article>
 
       <article class="phase done-phase">
@@ -307,13 +308,13 @@ flowchart LR
           <li>Transactions and spans: app start time, screen load, HTTP timings</li>
           <li>Later: web session replay with <code>rrweb</code> (not started)</li>
         </ul>
-        <div class="whynow"><span class="label">Why now</span>It reuses the SDK transport. It shipped before Phase 7, so it stores sessions and transactions in Postgres for now; moving transactions to ClickHouse comes with Phase 7.</div>
+        <div class="whynow"><span class="label">Why now</span>It reuses the SDK transport and queue. It was built alongside Phase 7, so it stores sessions and transactions in Postgres; moving transactions into the ClickHouse that Phase 7 added is a later step.</div>
         <p><a href="https://francisije.github.io/juju/performance.html">See how sessions merge, what each SDK times, and how it was verified on devices →</a></p>
         <div class="done"><span class="label">Done when</span>The crash-free rate for a release changes correctly after a forced crash. Verified with release builds: a fatal crash on an iPhone simulator took the example release from 100% (3 of 3) to 80% (4 of 5), and the same test passed on Android.</div>
       </article>
 
-      <article class="phase">
-        <div class="phase-head"><span class="phase-num">Phase 9</span><h3>Scale and hardening</h3><span class="pill">Planned</span></div>
+      <article class="phase next">
+        <div class="phase-head"><span class="phase-num">Phase 9</span><h3>Scale and hardening</h3><span class="pill next">Next</span></div>
         <ul>
           <li>Replace the in-process channel with NATS JetStream or Redis Streams, so events survive a restart</li>
           <li>Per-project rate limits, quotas and client-side sampling</li>

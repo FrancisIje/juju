@@ -230,7 +230,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
       </ul>
     </div>
     <div class="why"><span class="label">Why percentiles, not the average</span>One 30-second outlier drags an average far away from what most people saw. p50 is the typical wait, and p95 is what the slowest 1 in 20 get, which is usually where the complaints come from.</div>
-    <div class="why"><span class="label">Why Postgres, for now</span>The roadmap puts transactions next to analytics in ClickHouse (Phase 7). This phase shipped first, so it stores both kinds of data in Postgres. Every query reads one project's time window through an index on <code>(project_id, started_at)</code>, and percentiles come from <code>percentile_cont</code>. That's fine at today's volume, and moving to a columnar store later changes the store, not the wire format or the SDKs.</div>
+    <div class="why"><span class="label">Why Postgres, for now</span>The roadmap puts transactions next to analytics in ClickHouse (Phase 7). The two phases were built at the same time, so this one stores both kinds of data in Postgres. Every query reads one project's time window through an index on <code>(project_id, started_at)</code>, and percentiles come from <code>percentile_cont</code>. That's fine at today's volume, and moving to a columnar store later changes the store, not the wire format or the SDKs.</div>
   </section>
 
   <section>
@@ -295,7 +295,7 @@ init({ dsn, sessions: false, tracing: false })</pre>
       <li><strong>Native crashes</strong> (a crash in Swift, Kotlin or C++) and a phone killing the app for memory leave no report, so those sessions stay "ok" and count as crash-free. Catching them needs native code in the SDKs.</li>
       <li><strong>App start on iOS and React Native Android</strong> starts at the JavaScript runtime or at <code>init</code>, not at the tap on the icon. A native module could record the earlier moment.</li>
       <li><strong>Sampling</strong> is a fixed share per SDK (<code>tracesSampleRate</code>). There are no server-side quotas yet; that's Phase 9.</li>
-      <li><strong>Storage</strong> is Postgres with no retention job yet, so rows accumulate. Moving transactions to ClickHouse with Phase 7, plus retention, are the next steps.</li>
+      <li><strong>Storage</strong> is Postgres with no retention job yet, so rows accumulate. Moving transactions into the ClickHouse that Phase 7 added, plus retention, are the next steps.</li>
       <li><strong>No alerts</strong> on a falling crash-free rate or a slower p95 yet, and no release-health API for scripts (to stop a rollout in CI).</li>
       <li><strong>Session replay</strong> (rrweb) from the roadmap isn't started.</li>
     </ul>

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { Client } from "@juju/core";
-import type { Envelope, JujuEvent, OutgoingEvent, SendResult, SessionEvent, TransactionEvent, Transport } from "@juju/core";
+import type { AnalyticsEvent, Envelope, JujuEvent, OutgoingEvent, SendResult, SessionEvent, TransactionEvent, Transport } from "@juju/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { describeElement, redact } from "../src/breadcrumbs";
 import { addNavigationSpans, routeName, shortUrl } from "../src/performance";
@@ -18,7 +18,7 @@ function setup(options: Partial<juju.WebOptions> = {}) {
 /** Every event sent so far, of every type. */
 async function allEvents(): Promise<OutgoingEvent[]> {
   await juju.flush();
-  return sent.flatMap((env) => env.events);
+  return sent.flatMap((env) => env.events) as JujuEvent[]; // these tests send only errors
 }
 
 /** The errors sent so far. Sessions and page loads travel in the same envelopes. */
@@ -329,4 +329,29 @@ it("page load phases leave no gap, including time queued in the browser", async 
   }
   expect(at).toBeCloseTo(247.8, 3);
   expect(spans.map((s) => s.description)).toContain("Queued in the browser");
+});
+
+describe("analytics", () => {
+  it("captures events with the browser context, and keeps the anonymous id in localStorage", async () => {
+    localStorage.clear();
+    setup();
+    juju.capture("viewed_pricing", { plan: "pro" });
+    await new Promise((r) => setTimeout(r, 0));
+    await juju.flush();
+    const e = sent.flatMap((env) => env.events).find((x) => x.type === "event") as AnalyticsEvent;
+    expect(e).toMatchObject({ name: "viewed_pricing", properties: { plan: "pro" }, context: { browser: { user_agent: navigator.userAgent } } });
+    expect(localStorage.getItem("juju.anon_id")).toBe(e.distinct_id);
+  });
+
+  it("still works when localStorage throws (private windows, blocked storage)", async () => {
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    setup();
+    juju.capture("viewed_pricing");
+    await new Promise((r) => setTimeout(r, 0));
+    await juju.flush();
+    expect(sent.flatMap((env) => env.events).some((x) => x.type === "event")).toBe(true);
+    get.mockRestore();
+  });
 });

@@ -37,6 +37,12 @@ type Live interface {
 	Changed(projectID int64)
 }
 
+// Analytics takes product analytics events (event, identify). Optional:
+// nil means analytics is off and they're dropped. Must not block.
+type Analytics interface {
+	Add(e *event.Event)
+}
+
 // Symbolicator rewrites minified or obfuscated frames into source
 // locations. Optional: nil skips symbolication.
 type Symbolicator interface {
@@ -56,6 +62,7 @@ type Deps struct {
 	Store        Store
 	Symbolicator Symbolicator
 	Alerter      Alerter
+	Analytics    Analytics
 	Live         Live
 	Log          *slog.Logger
 }
@@ -83,11 +90,21 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 		}
 	}()
 
-	switch e.Type {
-	case event.TypeSession:
+	switch {
+	// Analytics events aren't issues: no symbolication, no fingerprint, no
+	// alerts. They go to ClickHouse in batches.
+	case e.IsAnalytics():
+		if d.Analytics != nil {
+			d.Analytics.Add(e)
+		} else {
+			log.Debug("analytics is off (no JUJU_CLICKHOUSE_URL), dropping event", "name", e.Name)
+		}
+		return
+	// Sessions and transactions have their own tables (see save below).
+	case e.Type == event.TypeSession:
 		save(ctx, log, func() error { _, err := d.Store.SaveSession(ctx, e); return err })
 		return
-	case event.TypeTransaction:
+	case e.Type == event.TypeTransaction:
 		save(ctx, log, func() error { _, err := d.Store.SaveTransaction(ctx, e); return err })
 		return
 	}

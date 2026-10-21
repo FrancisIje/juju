@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"juju/internal/alert"
+	"juju/internal/analytics"
 	"juju/internal/api"
 	"juju/internal/auth"
 	"juju/internal/blob"
@@ -42,6 +43,7 @@ type Deps struct {
 	Auth      *auth.Service
 	Alerts    *alert.Notifier
 	Live      *live.Hub
+	Analytics *analytics.Client // nil: analytics off
 	Config    config.Config
 	Log       *slog.Logger
 }
@@ -71,7 +73,7 @@ func Routes(d Deps) http.Handler {
 		Keys: st, Queue: q, Log: log, Now: time.Now,
 	})
 	(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, Log: log}).Register(mux)
-	(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, Live: d.Live, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
+	(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, Live: d.Live, Analytics: d.Analytics, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
 	// Everything else is the dashboard. More specific patterns (above) win,
 	// and an unknown /api/ path must be a JSON 404, not the app's HTML.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
@@ -106,19 +108,57 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	}
 	alerts.Start(2)
 	hub := live.NewHub()
+
+	// Product analytics, if ClickHouse is configured. juju starts either way:
+	// errors are the core job, so a ClickHouse that's down or slow to start
+	// mustn't stop them. Tables are created in the background, retrying, and
+	// the writer holds events until it can write them.
+	var ch *analytics.Client
+	var chWriter *analytics.Writer
+	if cfg.ClickHouseURL != "" {
+		ch = &analytics.Client{URL: cfg.ClickHouseURL, User: cfg.ClickHouseUser, Password: cfg.ClickHousePassword, Database: cfg.ClickHouseDatabase}
+		chWriter = &analytics.Writer{Client: ch, Log: log}
+		chWriter.Start()
+		go func() {
+			for attempt := 1; ; attempt++ {
+				err := ch.Migrate(ctx)
+				if err == nil {
+					log.Info("analytics on", "clickhouse", cfg.ClickHouseURL)
+					return
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				if attempt == 1 || attempt%12 == 0 {
+					log.Error("analytics: can't set up ClickHouse yet, retrying every 5s", "err", err)
+				}
+				select {
+				case <-time.After(5 * time.Second):
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	} else {
+		log.Info("analytics off: set JUJU_CLICKHOUSE_URL to turn it on")
+	}
+	var analyticsSink worker.Analytics
+	if chWriter != nil {
+		analyticsSink = chWriter
+	}
 	authSvc := &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}
 
 	workersDone := make(chan struct{})
 	go func() {
 		// Workers get a fresh context, not ctx: they must keep writing
 		// while draining after ctx is cancelled.
-		worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Live: hub, Log: log}, cfg.Workers)
+		worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Analytics: analyticsSink, Live: hub, Log: log}, cfg.Workers)
 		close(workersDone)
 	}()
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: authSvc, Alerts: alerts, Live: hub, Config: cfg, Log: log}),
+		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: authSvc, Alerts: alerts, Live: hub, Analytics: ch, Config: cfg, Log: log}),
 		ReadHeaderTimeout: 5 * time.Second,  // slow clients can't hold connections open forever
 		ReadTimeout:       30 * time.Second, // a 1 MB body on a bad mobile network
 		WriteTimeout:      30 * time.Second,
@@ -142,6 +182,9 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		q.Close()
 		<-workersDone
 		alerts.Stop()
+		if chWriter != nil {
+			chWriter.Stop()
+		}
 		return err
 	case <-ctx.Done():
 	}
@@ -155,6 +198,9 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	q.Close()
 	<-workersDone
 	alerts.Stop() // after the workers: they may have just queued alerts
+	if chWriter != nil {
+		chWriter.Stop() // after the workers too: writes what they handed over
+	}
 	log.Info("shutdown complete")
 	return nil
 }

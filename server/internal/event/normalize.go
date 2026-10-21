@@ -70,22 +70,30 @@ func validateRequired(e *Event) ValidationError {
 		e.EventID = u.String() // canonical lowercase form, so dedupe matches regardless of case
 	}
 
-	// Each type carries its own payload; a payload for another type is
-	// dropped, so a session update can never create an issue.
+	// Each type carries its own payload; payloads for other types are
+	// dropped, so a session update can never create an issue or an
+	// analytics event, and the other way round.
+	analytics := func() { e.Name, e.DistinctID, e.AnonID, e.Properties = "", "", "", nil }
 	switch e.Type {
 	case TypeError:
 		e.Session, e.Transaction = nil, nil
+		analytics()
 		if e.Exception == nil || (strings.TrimSpace(e.Exception.Type) == "" && strings.TrimSpace(e.Exception.Message) == "") {
 			errs = append(errs, FieldError{"exception", "needs a type or a message"})
 		}
+	case TypeEvent, TypeIdentify:
+		e.Session, e.Transaction = nil, nil
+		errs = append(errs, validateAnalytics(e)...)
 	case TypeSession:
 		e.Exception, e.Transaction = nil, nil
+		analytics()
 		errs = append(errs, validateSession(e)...)
 	case TypeTransaction:
 		e.Exception, e.Session = nil, nil
+		analytics()
 		errs = append(errs, validateTransaction(e)...)
 	default:
-		errs = append(errs, FieldError{"type", fmt.Sprintf("%q is not supported (expected error, session or transaction)", e.Type)})
+		errs = append(errs, FieldError{"type", fmt.Sprintf("%q is not supported (expected error, event, identify, session or transaction)", e.Type)})
 	}
 	return errs
 }
@@ -124,6 +132,12 @@ func (e *Event) repairFields() {
 	e.Environment = e.truncate("environment", e.Environment, maxEnvironment)
 	e.Release = e.truncate("release", e.Release, maxRelease)
 
+	// Analytics events carry no stack, breadcrumbs or tags to repair. Ask by
+	// type: sessions and transactions have no exception either.
+	if e.IsAnalytics() {
+		e.repairAnalytics()
+		return
+	}
 	if ex := e.Exception; ex != nil {
 		e.repairException(ex)
 	}

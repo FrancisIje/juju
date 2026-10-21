@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
 const shots = process.env.JUJU_E2E_SHOTS;
+// The server has ClickHouse (JUJU_CLICKHOUSE_URL): check product analytics too.
+const analyticsOn = process.env.JUJU_E2E_ANALYTICS === "1";
 const slack = process.env.JUJU_E2E_SLACK;
 
 /** `focus`: an element to keep in view (below the fold), scrolled to after each resize. */
@@ -61,6 +63,19 @@ async function sendError(page: Page, dsn: string, message: string, release = "we
   expect(res.status()).toBe(202);
 }
 
+/** Sends product analytics events the way an SDK would. */
+async function sendAnalytics(page: Page, dsn: string, sdk: string, events: { name: string; who: string; props?: Record<string, unknown> }[]) {
+  const m = /^(https?):\/\/([^@]+)@([^/]+)\/(\d+)/.exec(dsn)!;
+  const res = await page.request.post(`${m[1]}://${m[3]}/api/v1/projects/${m[4]}/events`, {
+    headers: { "X-Juju-Key": m[2]! },
+    data: {
+      sdk: { name: sdk, version: "0.1.0" },
+      events: events.map((e) => ({ event_id: randomUUID(), type: "event", platform: "javascript", timestamp: new Date().toISOString(), name: e.name, distinct_id: e.who, properties: e.props ?? {} })),
+    },
+  });
+  expect(res.status()).toBe(202);
+}
+
 test("first run → project → error → resolve → regression alert → invite a teammate", async ({ page, browser }) => {
   const errors: string[] = [];
   // Before logging in, GET /api/ui/me answers 401: that's how the app learns
@@ -94,7 +109,9 @@ test("first run → project → error → resolve → regression alert → invit
   // The secret key is shown once, with the DSN.
   await expect(page.getByText("Copy it now: it's shown only this once")).toBeVisible();
   const dsn = (await page.locator("pre.code").nth(1).textContent())!;
-  expect(dsn).toMatch(/^http:\/\/pk_[^@]+@localhost:8080\/\d+$/);
+  // The DSN points at this server (JUJU_PUBLIC_URL), whatever port the test runs on.
+  const host = new URL(process.env.JUJU_E2E_URL ?? "http://localhost:8080").host;
+  expect(dsn).toMatch(new RegExp(`^http://pk_[^@]+@${host.replace(/[.]/g, "\\.")}/\\d+$`));
   await shoot(page, "02-setup-dsn");
   // Gone after a reload, like on the server.
   await page.reload();
@@ -170,6 +187,32 @@ test("first run → project → error → resolve → regression alert → invit
     // new issue ×2 + regression + the test message
     await expect(page.locator("table.table tbody tr")).toHaveCount(4);
     await expect(page.locator("table.table")).toContainText("regression");
+  }
+
+  if (analyticsOn) {
+    // Product analytics: before any event, the page says how to send one.
+    const projectBase = page.url().replace(/(\/p\/\d+)\/.*$/, "$1");
+    await page.goto(`${projectBase}/analytics`);
+    await expect(page.getByRole("heading", { name: "Track what people do" })).toBeVisible();
+    await sendAnalytics(page, dsn, "juju.web", [
+      { name: "checkout_started", who: "anon-a", props: { plan: "pro" } },
+      { name: "checkout_started", who: "anon-b", props: { plan: "free" } },
+      { name: "checkout_completed", who: "anon-a" },
+    ]);
+    await sendAnalytics(page, dsn, "juju.flutter", [{ name: "checkout_started", who: "anon-c", props: { plan: "pro" } }]);
+    // The writer batches every second: reload until the events are in.
+    await expect.poll(async () => (await page.reload(), page.getByLabel("Event").isVisible()), { timeout: 15_000 }).toBe(true);
+    await page.getByLabel("Break down by").selectOption("lib");
+    await expect(page).toHaveURL(/breakdown=lib/);
+    // Exactly what was sent, with names people read.
+    await expect(page.getByRole("row", { name: /Web\s+2\s+67%/ })).toBeVisible();
+    await expect(page.getByRole("row", { name: /Flutter\s+1\s+33%/ })).toBeVisible();
+    await shoot(page, "10-analytics");
+    await page.keyboard.press("2");
+    await expect(page).toHaveURL(/\/analytics\/funnels/);
+    await expect(page.getByText("3 people · 100%")).toBeVisible();
+    await expect(page.getByText("1 person · 33%")).toBeVisible();
+    await shoot(page, "11-funnel");
   }
 
   // Invite a teammate into Acme.
@@ -340,7 +383,7 @@ test("sessions and transactions → releases → performance → a slow page loa
   const chart = page.getByRole("img", { name: /Crash-free sessions per day/ });
   await chart.focus();
   await page.keyboard.press("ArrowLeft");
-  await expect(page.locator(".chart-tip")).toContainText("sessions (crashed)");
+  await expect(page.locator(".line-chart-tip")).toContainText("sessions (crashed)");
   await page.keyboard.press("Escape");
   await chart.blur(); // the screenshot shows the page, not a keyboard focus ring
   await shoot(page, "10-releases");

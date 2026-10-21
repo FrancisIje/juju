@@ -3,7 +3,9 @@
 [Unit]
 Description=juju server
 Requires=postgresql.service
-After=network-online.target postgresql.service
+After=network-online.target postgresql.service clickhouse-server.service
+# Wants, not Requires: if ClickHouse is down, juju still tracks errors.
+Wants=clickhouse-server.service
 Wants=network-online.target
 
 [Service]

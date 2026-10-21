@@ -114,7 +114,7 @@ export function LineChart({
   const tipLeft = active === null ? 0 : Math.min(Math.max(x(active) + 12, 0), width - 190);
 
   return (
-    <figure className="chart" aria-label={title}>
+    <figure className="line-chart" aria-label={title}>
       {showLabels && (
         <figcaption className="legend">
           {series.map((s) => (
@@ -127,7 +127,7 @@ export function LineChart({
           ))}
         </figcaption>
       )}
-      <div className="chart-plot" ref={wrap}>
+      <div className="line-chart-plot" ref={wrap}>
         <svg
           width={width}
           height={H}
@@ -176,7 +176,7 @@ export function LineChart({
           />
         </svg>
         {active !== null && (
-          <div className="chart-tip" style={{ left: tipLeft }} role="status">
+          <div className="line-chart-tip" style={{ left: tipLeft }} role="status">
             <div className="faint">{labels[active]}</div>
             {series.map((s) => (
               <div key={s.key} className="tip-row">
@@ -197,7 +197,7 @@ export function LineChart({
           </div>
         )}
       </div>
-      <details className="chart-table">
+      <details className="line-chart-table">
         <summary>Show as a table</summary>
         <div style={{ overflowX: "auto" }}>
           <table className="table">

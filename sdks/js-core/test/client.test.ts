@@ -38,7 +38,7 @@ describe("batching", () => {
     expect(sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(sent).toHaveLength(1);
-    expect(sent[0]!.events.map((e) => (e as JujuEvent).exception.message)).toEqual(["a", "b", "c"]);
+    expect((sent[0]!.events as JujuEvent[]).map((e) => e.exception.message)).toEqual(["a", "b", "c"]);
     expect(c.pending()).toBe(0);
   });
 

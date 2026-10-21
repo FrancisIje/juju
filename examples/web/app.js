@@ -75,6 +75,22 @@ const actions = {
     await juju.flush();
     log("flushed");
   },
+  "capture-checkout": () => {
+    juju.capture("checkout_started", { plan: "pro", items: 3 });
+    log("captured checkout_started {plan: pro, items: 3}");
+  },
+  "capture-completed": () => {
+    juju.capture("checkout_completed", { plan: "pro" });
+    log("captured checkout_completed");
+  },
+  identify: () => {
+    juju.identify("web_user_1");
+    log("identify(web_user_1): earlier events from this browser now count for web_user_1");
+  },
+  reset: () => {
+    juju.reset();
+    log("reset(): a new anonymous id for whoever comes next");
+  },
 };
 for (const [id, fn] of Object.entries(actions)) document.getElementById(id).addEventListener("click", fn);
 
@@ -94,6 +110,9 @@ const selftest = location.hash;
 // makes a request while the page loads (a span of the page load), changes
 // route after 2.5 s (a navigation transaction), and leaves at 5 s, so the
 // session ends as "exited".
+// #analytics-selftest sends a known set of analytics events, so a chart can
+// be checked against exactly what was sent: 3 checkout_started (2 before
+// login, 1 after), 1 identify, 1 checkout_completed, from one person.
 if (selftest === "#selftest-healthy" && dsn) {
   fetch("../../README.md?during=load").then((r) => log(`fetched README while loading → ${r.status}`));
   setTimeout(() => {
@@ -105,6 +124,17 @@ if (selftest === "#selftest-healthy" && dsn) {
     log("leaving the page cleanly");
     location.href = "about:blank";
   }, 5000);
+} else if (selftest === "#analytics-selftest" && dsn) {
+  (async () => {
+    actions["capture-checkout"]();
+    actions["capture-checkout"]();
+    actions.identify();
+    actions["capture-checkout"]();
+    actions["capture-completed"]();
+    await new Promise((r) => setTimeout(r, 100));
+    await juju.flush();
+    log("analytics selftest: sent");
+  })();
 } else if (selftest.startsWith("#selftest") && dsn) {
   (async () => {
     document.getElementById("navigate").click();

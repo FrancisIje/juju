@@ -44,6 +44,34 @@ export interface JujuEvent {
   tags?: Record<string, string>;
 }
 
+/** A product analytics event: capture("checkout_started", { plan: "pro" }). */
+export interface AnalyticsEvent {
+  event_id: string;
+  type: "event";
+  timestamp: string;
+  platform: string;
+  release?: string;
+  environment?: string;
+  name: string;
+  /** Who did it: the anonymous id of this device, or the user id after identify(). */
+  distinct_id: string;
+  properties?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+}
+
+/** identify(): from now on this device is distinct_id; anon_id is the id it had before. */
+export interface IdentifyEvent {
+  event_id: string;
+  type: "identify";
+  timestamp: string;
+  platform: string;
+  release?: string;
+  environment?: string;
+  distinct_id: string;
+  anon_id?: string;
+  context?: Record<string, unknown>;
+}
+
 /** One update to an app session. See server/internal/event/performance.go. */
 export interface SessionData {
   sid: string;
@@ -100,7 +128,7 @@ export interface TransactionEvent {
 }
 
 /** Everything the SDK queues and sends. */
-export type OutgoingEvent = JujuEvent | SessionEvent | TransactionEvent;
+export type OutgoingEvent = JujuEvent | AnalyticsEvent | IdentifyEvent | SessionEvent | TransactionEvent;
 
 export interface SdkInfo {
   name: string;

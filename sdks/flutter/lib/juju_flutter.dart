@@ -30,14 +30,14 @@ import 'src/flutter/hooks.dart';
 import 'src/flutter/performance.dart';
 import 'src/flutter/storage.dart';
 
-export 'src/core/client.dart' show JujuClient, ClientOptions, QueueStorage, JsonMap, sessionResumeAfter;
+export 'src/core/client.dart' show JujuClient, ClientOptions, QueueStorage, IdentityStorage, JsonMap, sessionResumeAfter;
 export 'src/core/tracing.dart' show JujuTransaction, JujuSpan;
 export 'src/flutter/performance.dart' show processStartTime;
 export 'src/core/dsn.dart' show Dsn;
 export 'src/core/stacktrace.dart' show parseStackTrace, makeIsInApp, JujuFrame, ParsedStack;
 export 'src/core/transport.dart' show Transport, SendResult, Delivered, Rejected, RetryLater, HttpTransport;
 export 'src/flutter/breadcrumbs.dart' show JujuNavigatorObserver, JujuHttpClient;
-export 'src/flutter/storage.dart' show FileQueueStorage;
+export 'src/flutter/storage.dart' show FileQueueStorage, FileIdentityStorage;
 
 class JujuOptions {
   const JujuOptions({
@@ -49,6 +49,7 @@ class JujuOptions {
     this.debug = false,
     this.flushInterval = const Duration(seconds: 5),
     this.storage,
+    this.identityStorage,
     this.transport,
     this.sessions = true,
     this.tracing = true,
@@ -74,6 +75,10 @@ class JujuOptions {
   /// Where unsent events are kept between launches. Defaults to a file in
   /// the app's support folder.
   final QueueStorage? storage;
+
+  /// Where the anonymous id is kept between launches. Defaults to a file in
+  /// the app's support folder.
+  final IdentityStorage? identityStorage;
 
   /// Replace how events are sent (used by tests).
   final Transport? transport;
@@ -110,6 +115,7 @@ abstract final class Juju {
       sdkName: 'juju.flutter',
       transport: options.transport,
       storage: options.storage ?? FileQueueStorage(),
+      identityStorage: options.identityStorage ?? FileIdentityStorage(),
       isInApp: makeIsInApp(options.appPackages),
       context: deviceContext,
       beforeSend: options.beforeSend,
@@ -167,6 +173,16 @@ abstract final class Juju {
       _client?.captureException(error, stack ?? StackTrace.current, tags: tags, mechanism: 'manual') ?? '';
 
   static void setUser(JsonMap? user) => _client?.setUser(user);
+
+  /// Records something a user did, for product analytics:
+  /// `Juju.capture('checkout_started', {'plan': 'pro'})`.
+  static void capture(String name, [JsonMap? properties]) => _client?.capture(name, properties);
+
+  /// After login: this install's events so far and from now on belong to [userId].
+  static void identify(String userId) => _client?.identify(userId);
+
+  /// After logout: forget the user, so the next person is new.
+  static void reset() => _client?.reset();
   static void setTag(String key, String value) => _client?.setTag(key, value);
   static void addBreadcrumb(String type, {String? message, JsonMap? data}) => _client?.addBreadcrumb(type, message: message, data: data);
 

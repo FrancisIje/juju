@@ -198,3 +198,22 @@ func TestNormalizeTransaction(t *testing.T) {
 		}
 	})
 }
+
+// Sessions and transactions have no exception, like analytics events, but
+// they're not analytics: their tags must still be cleaned. (Repairs are
+// chosen by type, not by "has no exception".)
+func TestPerformanceEventsGetTheCommonRepairs(t *testing.T) {
+	for name, base := range map[string]func() map[string]any{"session": validSession, "transaction": validTransaction} {
+		t.Run(name, func(t *testing.T) {
+			in := base()
+			in["tags"] = map[string]any{"ok": "v", strings.Repeat("k", 40): "too long a key"}
+			e, err := Normalize(encode(t, in), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(e.Tags) != 1 || !strings.Contains(strings.Join(e.Repairs, " "), "tags: dropped 1") {
+				t.Errorf("tags %v, repairs %v", e.Tags, e.Repairs)
+			}
+		})
+	}
+}

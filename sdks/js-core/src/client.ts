@@ -3,7 +3,7 @@ import { parseDsn, type Dsn } from "./dsn";
 import { defaultIsInApp, exceptionFromThrown, type InAppFn } from "./stacktrace";
 import { isoTime, monotonicClock, noopSpan, Transaction, type Span, type SpanOptions, type TransactionHost, type TransactionOptions } from "./tracing";
 import { byteLength, fetchTransport, type SendResult, type Transport } from "./transport";
-import type { Breadcrumb, Envelope, JujuEvent, OutgoingEvent, SdkInfo, SessionData, SessionEvent, TransactionEvent, User } from "./types";
+import type { AnalyticsEvent, Breadcrumb, Envelope, IdentifyEvent, JujuEvent, OutgoingEvent, SdkInfo, SessionData, SessionEvent, TransactionEvent, User } from "./types";
 import { uuid4 } from "./uuid";
 
 export interface ClientOptions {
@@ -24,8 +24,20 @@ export interface ClientOptions {
   flushIntervalMs?: number;
   /** Send immediately once this many events are waiting. Default 20. */
   maxBatchSize?: number;
-  /** Events kept while offline. New events past this are dropped. Default 100. */
+  /** Errors kept while offline. New ones past this are dropped. Default 100. */
   maxQueueSize?: number;
+  /**
+   * Everything that isn't an error (analytics events, session updates,
+   * transactions) kept while offline, counted separately from errors so a
+   * burst of it can never push a crash report out. Default 1000.
+   */
+  maxAnalyticsQueueSize?: number;
+  /**
+   * Where the anonymous id (and the user id after identify) is kept between
+   * launches, so one device stays one person. localStorage on the web,
+   * AsyncStorage on React Native. Without it the id lasts for this session.
+   */
+  identityStorage?: KeyValueStorage;
   maxBreadcrumbs?: number;
   debug?: boolean;
   logger?: Pick<Console, "warn">;
@@ -57,6 +69,15 @@ interface SessionState extends Omit<SessionData, "started"> {
   pausedAt?: number;
 }
 
+/** The shape localStorage and React Native's AsyncStorage both have. */
+export interface KeyValueStorage {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+}
+
+const ANON_KEY = "juju.anon_id";
+const DISTINCT_KEY = "juju.distinct_id";
+
 const BASE_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
 
@@ -71,6 +92,14 @@ export class Client implements TransactionHost {
   private session: SessionState | undefined;
   private active: Transaction | undefined;
   private readonly clock: () => number;
+  // Identity: anonId is this device's random id; distinctId is who events
+  // are from (anonId until identify(), then the user id).
+  private anonId = "";
+  private distinctId = "";
+  // capture/identify/reset run in call order on this chain, after the stored
+  // ids have loaded: on React Native storage is asynchronous, and events
+  // captured in the first moments must use the stored id, not a new one.
+  private identityChain: Promise<void>;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private timerDueAt = 0;
   private inFlight: Promise<void> | undefined;
@@ -109,6 +138,73 @@ export class Client implements TransactionHost {
     // the crash report we're about to read back.
     this.ready = this.loadSaved();
     this.persistChain = this.ready;
+    this.identityChain = this.loadIdentity();
+  }
+
+  /**
+   * Records something a user did, for product analytics: capture("checkout_started",
+   * { plan: "pro" }). Property values are stored as text (numbers and true/false
+   * too), which is what breakdowns group by. Never throws.
+   */
+  capture(name: string, properties?: Record<string, unknown>): void {
+    try {
+      if (this.closed || typeof name !== "string" || !name.trim()) return;
+      // Stamped now, so the time is when it happened even if the id loads later.
+      const base = this.analyticsBase();
+      const props = properties && typeof properties === "object" ? { ...properties } : undefined;
+      this.afterIdentity(() => {
+        const event: AnalyticsEvent = { ...base, type: "event", name, distinct_id: this.distinctId };
+        if (props && Object.keys(props).length > 0) event.properties = props;
+        this.enqueue(event);
+      });
+    } catch (err) {
+      this.log("could not capture event", err);
+    }
+  }
+
+  /**
+   * Says who this device's user is, after they log in. Events from before
+   * (sent with the anonymous id) and after count as one person. Also sets
+   * the user on error reports, unless setUser already did.
+   */
+  identify(userId: string): void {
+    try {
+      if (this.closed || typeof userId !== "string" || !userId.trim()) return;
+      const base = this.analyticsBase();
+      if (!this.user) this.user = { id: userId };
+      this.afterIdentity(() => {
+        if (userId === this.distinctId) return; // already identified as this user
+        const event: IdentifyEvent = { ...base, type: "identify", distinct_id: userId };
+        // Link the anonymous history only while still anonymous. Someone
+        // switching accounts on a shared device starts fresh, instead of
+        // merging two people.
+        if (this.distinctId === this.anonId) event.anon_id = this.anonId;
+        this.distinctId = userId;
+        void this.saveIdentity();
+        this.enqueue(event);
+      });
+    } catch (err) {
+      this.log("could not identify", err);
+    }
+  }
+
+  /**
+   * Forgets the user, after they log out: a new anonymous id, so whoever
+   * uses the device next isn't counted as them.
+   */
+  reset(): void {
+    this.user = undefined;
+    this.afterIdentity(() => {
+      this.anonId = uuid4();
+      this.distinctId = this.anonId;
+      void this.saveIdentity();
+    });
+  }
+
+  /** Who events are currently sent as. Resolves once the stored id has loaded. */
+  async getDistinctId(): Promise<string> {
+    await this.identityChain;
+    return this.distinctId;
   }
 
   /**
@@ -406,12 +502,63 @@ export class Client implements TransactionHost {
     return event;
   }
 
+  private analyticsBase() {
+    const base: { event_id: string; timestamp: string; platform: string; release?: string; environment?: string; context?: Record<string, unknown> } = {
+      event_id: uuid4(),
+      timestamp: new Date().toISOString(),
+      platform: this.opts.platform ?? "javascript",
+    };
+    if (this.opts.release) base.release = this.opts.release;
+    if (this.opts.environment) base.environment = this.opts.environment;
+    // The device context lets breakdowns by OS and browser work.
+    const context = this.opts.context?.();
+    if (context) base.context = context;
+    return base;
+  }
+
+  private afterIdentity(fn: () => void): void {
+    this.identityChain = this.identityChain.then(fn).catch((err) => this.log("analytics", err));
+  }
+
+  private async loadIdentity(): Promise<void> {
+    const store = this.opts.identityStorage;
+    let anon: string | null = null;
+    let distinct: string | null = null;
+    if (store) {
+      try {
+        anon = await store.getItem(ANON_KEY);
+        distinct = await store.getItem(DISTINCT_KEY);
+      } catch (err) {
+        this.log("could not read the stored id", err);
+      }
+    }
+    this.anonId = anon || uuid4();
+    this.distinctId = distinct || this.anonId;
+    if (!anon) await this.saveIdentity();
+  }
+
+  private async saveIdentity(): Promise<void> {
+    const store = this.opts.identityStorage;
+    if (!store) return;
+    try {
+      await store.setItem(ANON_KEY, this.anonId);
+      await store.setItem(DISTINCT_KEY, this.distinctId);
+    } catch (err) {
+      this.log("could not store the id", err); // the id lasts for this session, which is still useful
+    }
+  }
+
   private enqueue(event: OutgoingEvent): boolean {
-    if (this.queue.length >= this.opts.maxQueueSize) {
+    // Errors get their own limit, so a flood of anything else (analytics,
+    // session updates, transactions) can never push out a crash report.
+    const analytics = event.type !== "error";
+    const sameKind = this.queue.reduce((n, e) => n + ((e.type !== "error") === analytics ? 1 : 0), 0);
+    const limit = analytics ? (this.opts.maxAnalyticsQueueSize ?? 1000) : this.opts.maxQueueSize;
+    if (sameKind >= limit) {
       // Drop the newest, not the oldest: when the queue overflows it's
       // usually a loop repeating the same error, and the first ones are
       // the most likely to show the cause.
-      this.log(`queue full (${this.opts.maxQueueSize}), dropping event`);
+      this.log(`queue full (${limit} ${analytics ? "non-error events" : "errors"}), dropping event`);
       return false;
     }
     this.queue.push(event);

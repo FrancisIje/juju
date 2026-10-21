@@ -40,13 +40,16 @@ type SDK struct {
 // reuse a single queue, retry and offline path for everything they send.
 const (
 	TypeError       = "error"       // an exception; grouped into issues
+	TypeEvent       = "event"       // a product analytics event (ClickHouse)
+	TypeIdentify    = "identify"    // links an anonymous id to a known user (ClickHouse)
 	TypeSession     = "session"     // one update to an app session (see Session)
 	TypeTransaction = "transaction" // a timed operation with spans (see Transaction)
 )
 
-// Event is one item from an SDK: an error report, a session update or a
-// transaction, depending on Type. Fields below the blank line are set by
-// the server and never trusted from the client.
+// Event is one thing an SDK reports: an error, an analytics event or
+// identify call, a session update or a transaction, depending on Type.
+// Fields below the first blank line are set by the server and never
+// trusted from the client.
 type Event struct {
 	EventID     string            `json:"event_id"`
 	Type        string            `json:"type"`
@@ -61,6 +64,12 @@ type Event struct {
 	Context     map[string]any    `json:"context,omitempty"`
 	User        *User             `json:"user,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
+	// Analytics: "event" (name, distinct_id, properties) and "identify"
+	// (distinct_id is the known user, anon_id the id the device had before).
+	Name       string         `json:"name,omitempty"`
+	DistinctID string         `json:"distinct_id,omitempty"`
+	AnonID     string         `json:"anon_id,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
 
 	SDK           SDK            `json:"sdk"`
 	ReceivedAt    time.Time      `json:"received_at"`

@@ -3,6 +3,7 @@ import { Shell } from "./components/Shell";
 import { api, ApiError, setUnauthorizedHandler, type Me } from "./lib/api";
 import { AppContext, type AppState } from "./lib/app";
 import { match, navigate, safeNext, useLocation } from "./lib/router";
+import { Analytics, type AnalyticsTab } from "./pages/Analytics";
 import { Issue } from "./pages/Issue";
 import { Issues } from "./pages/Issues";
 import { InvitePage } from "./pages/InvitePage";
@@ -161,6 +162,14 @@ function Routed({ path, query }: { path: string; query: URLSearchParams }) {
     return (
       <Shell projectId={Number(m.project)}>
         <Performance key={m.project} projectId={Number(m.project)} />
+      </Shell>
+    );
+  }
+  if ((m = match("/p/:project/analytics/:tab", path)) || (m = match("/p/:project/analytics", path))) {
+    const tab = (["trends", "funnels", "retention"] as const).includes(m.tab as AnalyticsTab) ? (m.tab as AnalyticsTab) : "trends";
+    return (
+      <Shell projectId={Number(m.project)}>
+        <Analytics key={m.project} projectId={Number(m.project)} tab={tab} />
       </Shell>
     );
   }

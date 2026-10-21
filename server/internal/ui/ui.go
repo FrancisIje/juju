@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"juju/internal/alert"
+	"juju/internal/analytics"
 	"juju/internal/auth"
 	"juju/internal/httpx"
 	"juju/internal/live"
@@ -26,9 +27,10 @@ type API struct {
 	Store       *store.Store
 	Auth        *auth.Service
 	Alerts      *alert.Notifier
-	Live        *live.Hub // optional: without it, /live answers 404 and the dashboard polls
-	PublicURL   string    // used to build DSNs, e.g. https://juju.example.com
-	AllowSignup bool      // can anyone create an account and organization? (the first account always can)
+	Live        *live.Hub         // optional: without it, /live answers 404 and the dashboard polls
+	Analytics   *analytics.Client // optional: nil when ClickHouse isn't configured
+	PublicURL   string            // used to build DSNs, e.g. https://juju.example.com
+	AllowSignup bool              // can anyone create an account and organization? (the first account always can)
 	Log         *slog.Logger
 }
 
@@ -60,6 +62,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	a.registerTeam(mux)
 	a.registerPerformance(mux)
+	a.registerAnalytics(mux)
 }
 
 type projectHandler func(w http.ResponseWriter, r *http.Request, projectID int64, user store.User)

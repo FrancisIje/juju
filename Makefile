@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test dashboard dashboard-dev dashboard-test
+.PHONY: help db devdb devch dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test dashboard dashboard-dev dashboard-test
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -14,6 +14,9 @@ db: ## Start Postgres with docker compose
 
 devdb: ## Start Postgres without Docker (keep this terminal open)
 	cd server && go run ./cmd/devdb -dir ../.devdb
+
+devch: ## Start ClickHouse for product analytics without Docker (keep this terminal open)
+	scripts/devch.sh .devch
 
 dev: ## Run the juju server (needs `make db` or `make devdb` first)
 	cd server && JUJU_LOG_LEVEL=debug go run ./cmd/juju serve
