@@ -22,13 +22,17 @@ import 'package:http/http.dart' as http;
 
 import 'src/core/client.dart';
 import 'src/core/stacktrace.dart';
+import 'src/core/tracing.dart';
 import 'src/core/transport.dart';
 import 'src/flutter/breadcrumbs.dart';
 import 'src/flutter/context.dart';
 import 'src/flutter/hooks.dart';
+import 'src/flutter/performance.dart';
 import 'src/flutter/storage.dart';
 
-export 'src/core/client.dart' show JujuClient, ClientOptions, QueueStorage, IdentityStorage, JsonMap;
+export 'src/core/client.dart' show JujuClient, ClientOptions, QueueStorage, IdentityStorage, JsonMap, sessionResumeAfter;
+export 'src/core/tracing.dart' show JujuTransaction, JujuSpan;
+export 'src/flutter/performance.dart' show processStartTime;
 export 'src/core/dsn.dart' show Dsn;
 export 'src/core/stacktrace.dart' show parseStackTrace, makeIsInApp, JujuFrame, ParsedStack;
 export 'src/core/transport.dart' show Transport, SendResult, Delivered, Rejected, RetryLater, HttpTransport;
@@ -47,6 +51,9 @@ class JujuOptions {
     this.storage,
     this.identityStorage,
     this.transport,
+    this.sessions = true,
+    this.tracing = true,
+    this.tracesSampleRate = 1,
   });
 
   final String dsn;
@@ -75,6 +82,16 @@ class JujuOptions {
 
   /// Replace how events are sent (used by tests).
   final Transport? transport;
+
+  /// Count sessions for the crash-free rate.
+  final bool sessions;
+
+  /// Time the app start, screen loads (with [Juju.navigatorObserver]) and
+  /// requests made through [Juju.httpClient].
+  final bool tracing;
+
+  /// Share of transactions to send, 0 to 1.
+  final double tracesSampleRate;
 }
 
 abstract final class Juju {
@@ -82,7 +99,8 @@ abstract final class Juju {
   static final List<VoidCallback> _uninstallers = [];
 
   /// Records screen changes: `MaterialApp(navigatorObservers: [Juju.navigatorObserver])`.
-  static final NavigatorObserver navigatorObserver = JujuNavigatorObserver(() => _client);
+  static final NavigatorObserver navigatorObserver = JujuNavigatorObserver(() => _client, tracing: () => _tracing);
+  static bool _tracing = false;
 
   static JujuClient? get client => _client;
 
@@ -105,10 +123,13 @@ abstract final class Juju {
       debug: options.debug,
       log: debugPrint,
       random: Random.secure(),
+      tracesSampleRate: options.tracesSampleRate,
     ));
     _client = client;
+    _tracing = options.tracing;
 
-    final lifecycle = JujuLifecycleObserver(client);
+    if (options.sessions) client.startSession();
+    final lifecycle = JujuLifecycleObserver(client, sessions: options.sessions);
     binding.addObserver(lifecycle);
     _uninstallers
       ..add(installFlutterErrorHook(client))
@@ -117,7 +138,14 @@ abstract final class Juju {
       // writes to onError, so only the real dispatcher can be hooked there.
       ..add(installPlatformErrorHook(client, PlatformDispatcher.instance))
       ..add(() => binding.removeObserver(lifecycle));
+
+    // The error hooks are in place first. Then read the process start while
+    // the saved queue loads, so init doesn't wait for one after the other.
+    // Still before runApp, so the app start exists before any request the
+    // app makes while starting.
+    final processStart = options.tracing ? processStartTime() : Future<DateTime?>.value();
     await client.ready;
+    if (options.tracing && identical(_client, client)) _uninstallers.add(startAppStart(client, processStart: await processStart));
   }
 
   /// Runs [body] in a zone that reports errors no other hook sees (for
@@ -128,7 +156,7 @@ abstract final class Juju {
     runZonedGuarded(
       body,
       (error, stack) {
-        _client?.captureException(error, stack, mechanism: 'zone');
+        _client?.captureException(error, stack, mechanism: 'zone', crashed: true);
         // Still print it, as Flutter would without a guarded zone.
         Zone.root.print('Uncaught error: $error\n$stack');
       },
@@ -158,7 +186,20 @@ abstract final class Juju {
   static void setTag(String key, String value) => _client?.setTag(key, value);
   static void addBreadcrumb(String type, {String? message, JsonMap? data}) => _client?.addBreadcrumb(type, message: message, data: data);
 
-  /// An http.Client that records each request as a breadcrumb.
+  /// Times something the app does:
+  ///
+  /// ```dart
+  /// final tx = Juju.startTransaction('checkout');
+  /// final span = tx.startChild('db', description: 'save order');
+  /// ...; span.finish(); tx.finish();
+  /// ```
+  ///
+  /// Before init it returns a transaction that sends nothing.
+  static JujuTransaction startTransaction(String name, {String op = 'custom'}) =>
+      _client?.startTransaction(name, op) ?? JujuTransaction(_Inert(), name: name, op: op, sampled: false);
+
+  /// An http.Client that records each request as a breadcrumb, and as a
+  /// span of the app start or screen load it happens during.
   static http.Client httpClient([http.Client? inner]) => JujuHttpClient(() => _client, inner);
 
   /// Send queued events now.
@@ -174,6 +215,7 @@ abstract final class Juju {
     _uninstallers.clear();
     _client?.close();
     _client = null;
+    _tracing = false;
   }
 
   @visibleForTesting
@@ -181,4 +223,9 @@ abstract final class Juju {
 
   @visibleForTesting
   static SendResult classifyStatus(int status, [String? retryAfter]) => classify(status, retryAfter);
+}
+
+class _Inert implements TransactionHost {
+  @override
+  void finishTransaction(JujuTransaction tx) {}
 }

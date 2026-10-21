@@ -1,4 +1,5 @@
-import { redact, toText, type Client } from "@juju/core";
+import { finishHttpSpan, redact, toText, type Client } from "@juju/core";
+import { shortUrl } from "./performance";
 
 // Console and XHR wrappers are shared with React Native, so they live in
 // @juju/core (instrument.ts). This file has the browser-only sources.
@@ -25,13 +26,17 @@ export function instrumentFetch(client: Client, isJujuUrl: (url: string) => bool
     if (isJujuUrl(url)) return original.call(this, input, init);
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const started = Date.now();
+    // Joins the page load or navigation that's running, if any.
+    const span = client.startSpan({ op: "http.client", description: `${method} ${shortUrl(url)}`, data: { method, url: shortUrl(url) } });
     return original.call(this, input, init).then(
       (res) => {
         client.addBreadcrumb({ type: "fetch", message: `${method} ${redact(url)} → ${res.status}`, data: { method, url: redact(url), status: res.status, duration_ms: Date.now() - started } });
+        finishHttpSpan(span, res.status);
         return res;
       },
       (err: unknown) => {
         client.addBreadcrumb({ type: "fetch", message: `${method} ${redact(url)} → failed`, data: { method, url: redact(url), error: toText(err) } });
+        finishHttpSpan(span, 0);
         throw err;
       },
     );

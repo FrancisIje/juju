@@ -109,7 +109,7 @@ void main() {
       });
       await done.future;
 
-      final byMessage = {for (final e in t.events) e['exception']['message']: e};
+      final byMessage = {for (final e in t.errors) e['exception']['message']: e};
       expect(byMessage['Bad state: framework']!['tags']['mechanism'], 'flutter_error');
       expect(byMessage['Bad state: async']!['tags']['mechanism'], 'platform_dispatcher');
       expect(byMessage['Bad state: zone']!['tags']['mechanism'], 'zone');
@@ -126,7 +126,7 @@ void main() {
       await Juju.init(JujuOptions(dsn: dsn, transport: t, storage: MemoryStorage()));
       FlutterError.reportError(FlutterErrorDetails(exception: StateError('once')));
       await Juju.flush();
-      expect(t.events, hasLength(1));
+      expect(t.errors, hasLength(1));
     });
 
     test('everything is a safe no-op before init', () {

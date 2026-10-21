@@ -53,6 +53,8 @@ export function Shell({ projectId, children }: { projectId: number | null; child
     if (projectId) {
       list.push(
         { id: "go-issues", group: "Go to", label: "Issues", hint: "g i", run: () => navigate(`${base}/issues`) },
+        { id: "go-releases", group: "Go to", label: "Releases: crash-free sessions", hint: "g r", run: () => navigate(`${base}/releases`) },
+        { id: "go-performance", group: "Go to", label: "Performance: page loads, app starts, screens", hint: "g p", run: () => navigate(`${base}/performance`) },
         { id: "go-analytics", group: "Go to", label: "Analytics: Trends", hint: "g a", run: () => navigate(`${base}/analytics/trends`) },
         { id: "go-funnels", group: "Go to", label: "Analytics: Funnels", run: () => navigate(`${base}/analytics/funnels`) },
         { id: "go-retention", group: "Go to", label: "Analytics: Retention", run: () => navigate(`${base}/analytics/retention`) },
@@ -78,7 +80,7 @@ export function Shell({ projectId, children }: { projectId: number | null; child
 
   useShortcuts({ "mod+k": () => setPalette(true), "?": () => setHelp(true) }, !palette && !help);
 
-  // "g i" and "g s": two-key sequences. This listener uses the capture phase,
+  // "g i", "g r", "g p" and "g s": two-key sequences. This listener uses the capture phase,
   // so it runs before the pages' own shortcuts and can keep the issue list
   // from also treating that "i" as "ignore".
   useEffect(() => {
@@ -89,7 +91,7 @@ export function Shell({ projectId, children }: { projectId: number | null; child
         pendingG.current = Date.now();
         return;
       }
-      const go = Date.now() - pendingG.current < 800 && base ? { i: `${base}/issues`, a: `${base}/analytics/trends`, s: `${base}/settings/setup` }[e.key] : undefined;
+      const go = Date.now() - pendingG.current < 800 && base ? { i: `${base}/issues`, r: `${base}/releases`, p: `${base}/performance`, a: `${base}/analytics/trends`, s: `${base}/settings/setup` }[e.key] : undefined;
       pendingG.current = 0;
       if (go) {
         e.preventDefault();
@@ -133,6 +135,8 @@ export function Shell({ projectId, children }: { projectId: number | null; child
           <div className="nav">
             <span className="nav-label">{current.org}</span>
             {nav(`${base}/issues`, current.name, current.unresolved)}
+            {nav(`${base}/releases`, "Releases")}
+            {nav(`${base}/performance`, "Performance")}
             {nav(`${base}/analytics`, "Analytics")}
             {nav(`${base}/settings`, "Settings")}
           </div>

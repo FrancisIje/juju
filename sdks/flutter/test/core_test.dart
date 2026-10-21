@@ -28,6 +28,16 @@ class FakeTransport implements Transport {
   }
 
   List<Map<String, dynamic>> get events => [for (final env in sent) ...(env['events'] as List).cast<Map<String, dynamic>>()];
+
+  /// The error events among events of every type (sessions share the queue).
+  List<Map<String, dynamic>> get errors => [
+        for (final e in events)
+          if (e['type'] == 'error') e
+      ];
+  List<Map<String, dynamic>> ofType(String type) => [
+        for (final e in events)
+          if (e['type'] == type) e
+      ];
 }
 
 class MemoryStorage implements QueueStorage {

@@ -19,6 +19,10 @@ type Store interface {
 	// SaveEvent stores e under the issue for fp, and reports whether that
 	// created a new issue or reopened a resolved one.
 	SaveEvent(ctx context.Context, e *event.Event, fp fingerprint.Result) (store.SaveResult, error)
+	// SaveSession merges a session update; SaveTransaction stores a
+	// transaction. Both report whether the row was new.
+	SaveSession(ctx context.Context, e *event.Event) (bool, error)
+	SaveTransaction(ctx context.Context, e *event.Event) (bool, error)
 }
 
 // Alerter is told about new issues and regressions. Optional: nil sends
@@ -86,14 +90,22 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 		}
 	}()
 
+	switch {
 	// Analytics events aren't issues: no symbolication, no fingerprint, no
 	// alerts. They go to ClickHouse in batches.
-	if e.IsAnalytics() {
+	case e.IsAnalytics():
 		if d.Analytics != nil {
 			d.Analytics.Add(e)
 		} else {
 			log.Debug("analytics is off (no JUJU_CLICKHOUSE_URL), dropping event", "name", e.Name)
 		}
+		return
+	// Sessions and transactions have their own tables (see save below).
+	case e.Type == event.TypeSession:
+		save(ctx, log, func() error { _, err := d.Store.SaveSession(ctx, e); return err })
+		return
+	case e.Type == event.TypeTransaction:
+		save(ctx, log, func() error { _, err := d.Store.SaveTransaction(ctx, e); return err })
 		return
 	}
 
@@ -128,5 +140,23 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 	}
 	// The SDK already got 202 and deleted the event, so it is gone. A
 	// durable queue (Phase 9) fixes this by retrying from disk.
+	log.Error("dropping event after retries", "err", err)
+}
+
+// save runs one write with the same retries as an error event. Sessions and
+// transactions need no alerts or live refresh: the pages that show them
+// reload on a timer, and an update per app launch would make every open
+// issue list refetch for nothing.
+func save(ctx context.Context, log *slog.Logger, write func() error) {
+	var err error
+	for i := range attempts {
+		if err = write(); err == nil {
+			return
+		}
+		if ctx.Err() != nil || i == attempts-1 {
+			break
+		}
+		time.Sleep(baseDelay << i)
+	}
 	log.Error("dropping event after retries", "err", err)
 }

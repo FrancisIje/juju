@@ -1,0 +1,387 @@
+<title>juju Performance and Sessions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column: the screens first, then the two ideas (sessions, transactions) with a hands-on replay of session updates, setup code, what was checked on real devices, and limits. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #6d28d9;
+  --accent-soft: #f1ebfd;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --warn: #a35300;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --shot-bg: #e3e7ec;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --info: #7aa2ff;
+    --code-bg: #1d242d; --shot-bg: #0a0d11;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --info: #7aa2ff;
+  --code-bg: #1d242d; --shot-bg: #0a0d11;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+kbd { font-family: var(--f-mono); font-size: 0.78em; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); white-space: nowrap; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section, .block { display: grid; gap: 16px; }
+section { gap: 22px; }
+.block { gap: 10px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-x: auto; white-space: nowrap; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+/* screen viewer */
+.viewer { display: grid; gap: 14px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; max-width: 100%; border: 1px solid var(--line); border-radius: 999px; overflow-x: auto; scrollbar-width: none; }
+.seg button { white-space: nowrap; flex: none; font: inherit; font-size: 0.9rem; padding: 6px 14px; border: 0; background: var(--bg); color: var(--fg); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.shot { background: var(--shot-bg); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.shot img { display: block; width: 100%; height: auto; }
+
+/* session replay */
+.replay { display: grid; gap: 14px; }
+.updates { display: grid; gap: 6px; }
+.upd { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; gap: 10px; align-items: center; font-family: var(--f-mono); font-size: 0.8rem; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.upd .n { color: var(--muted); }
+.upd .st { font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.crashed { color: var(--bad); background: var(--bad-soft); }
+.chip.exited { color: var(--muted); background: var(--code-bg); }
+.chip.ignored { color: var(--muted); background: var(--code-bg); }
+.chip.ignored::before { background: transparent; border: 1px solid currentColor; }
+.row-out { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.row-out div { background: var(--surface); padding: 10px 12px; display: grid; gap: 2px; }
+.row-out b { font-family: var(--f-mono); font-size: 1rem; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix .mono { font-family: var(--f-mono); font-size: 0.8rem; color: var(--accent); }
+.fix p { font-size: 0.93rem; }
+footer { color: var(--muted); font-size: 0.9rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Phase 8 · Performance and sessions</span>
+    <h1>See which release crashes more, and which screen got slow</h1>
+    <p class="lede">Errors tell you something broke. They don't tell you how often people's apps crash, or that checkout got half a second slower in the last release. Phase 8 adds both: sessions, which give each release a crash-free rate, and transactions with spans, which time page loads, app starts and screens down to the request that held them up.</p>
+    <div class="logline">[phase 8] <b>DONE</b> verified="forced crash on iOS and Android release builds: juju-example@0.1.0+1 went from 100% (3/3) to 80% (4/5) crash-free; page loads in Chrome; app start and screen loads on Android and iOS" tests="Go event/store/ui/worker, 151 JS, 65 Flutter, 68 dashboard, 2 end-to-end"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The screens</span>
+    <h2>Real screenshots from the verification run</h2>
+    <div class="panel viewer">
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Screen">
+          <button type="button" id="s-releases" data-screen="releases" aria-pressed="true">Releases</button>
+          <button type="button" id="s-performance" data-screen="performance" aria-pressed="false">Performance</button>
+          <button type="button" id="s-transaction" data-screen="transaction" aria-pressed="false">Transaction</button>
+          <button type="button" id="s-waterfall" data-screen="waterfall" aria-pressed="false">Spans</button>
+        </div>
+        <div class="seg" role="group" aria-label="Theme">
+          <button type="button" id="t-dark" data-theme-pick="dark" aria-pressed="true">Dark</button>
+          <button type="button" id="t-light" data-theme-pick="light" aria-pressed="false">Light</button>
+        </div>
+      </div>
+      <p class="note" id="shot-caption"></p>
+      <div class="shot"><img id="shot" src="img/performance/10-releases-dark.jpg" alt="Release health in dark mode" width="1360" height="860"></div>
+    </div>
+    <p class="note">The data is a week the end-to-end test sends the way the SDKs do: 280 sessions over two releases, and 168 page loads where web@1.0.1's cart request got slower. Shortcuts: <kbd>g</kbd> <kbd>r</kbd> releases, <kbd>g</kbd> <kbd>p</kbd> performance, <kbd>j</kbd> <kbd>k</kbd> <kbd>Enter</kbd> in the list, <kbd>[</kbd> <kbd>]</kbd> between samples, arrow keys to read a chart.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Sessions</span>
+    <h2>A crash-free rate needs one row per session</h2>
+    <p>A <b>session</b> is one run of the app in the foreground on mobile, or one page load on the web. The SDK sends an update when it starts, when it ends, and when it crashes. A release's <b>crash-free sessions</b> is the share of its sessions that didn't end in a crash. It's the number mobile teams watch after every release, because an error count can't tell "10 crashes for 10 people" from "10 crashes out of a million launches".</p>
+    <p>Updates don't arrive tidily. A phone offline in the background sends its queue later, a retry resends what may already have arrived, and a crash report from the last launch arrives after this launch's start. So the server keeps <b>one row per session</b> and merges every update into it with three rules:</p>
+    <ul>
+      <li>Each update carries <code>seq</code>, a counter the SDK raises with every change. The status comes from the highest <code>seq</code>, so a late update can't undo a newer one.</li>
+      <li><b>Crashed is final.</b> Nothing after a crash makes the session healthy again.</li>
+      <li>Error counts only grow, and the start is the earliest seen. A repeat changes nothing.</li>
+    </ul>
+
+    <div class="panel replay">
+      <span class="label">Try it: the same three updates, in the order the network delivered them</span>
+      <div class="seg" role="group" aria-label="Arrival order">
+        <button type="button" id="o-tidy" data-order="tidy" aria-pressed="true">In order</button>
+        <button type="button" id="o-late" data-order="late" aria-pressed="false">Start arrives last</button>
+        <button type="button" id="o-retry" data-order="retry" aria-pressed="false">Retried twice</button>
+        <button type="button" id="o-crash" data-order="crash" aria-pressed="false">Crash, then a stale update</button>
+      </div>
+      <div class="updates" id="updates" aria-live="polite"></div>
+      <span class="label">The row the server keeps</span>
+      <div class="row-out" id="row-out"></div>
+      <p class="note" id="replay-note"></p>
+    </div>
+
+    <div class="why"><span class="label">Why not count sessions per hour</span>Counters are smaller, but a session changes state after it's counted. Moving one from "ok" to "crashed" means knowing it was counted as ok, and a retried update would be counted twice. A row keyed by the session's id absorbs both for free. It's one <code>INSERT … ON CONFLICT DO UPDATE</code>, and the integration test sends the same updates in four orders and expects the same row each time.</div>
+
+    <div class="block">
+      <h3>What counts as a crash</h3>
+      <div class="panel" style="padding:0">
+        <table>
+          <thead><tr><th>Platform</th><th>Crashed</th><th>Counted as an error, not a crash</th></tr></thead>
+          <tbody>
+            <tr><td>Web</td><td>an error or rejected promise that nothing caught</td><td>errors the app passes to <code>captureException</code></td></tr>
+            <tr><td>React Native</td><td>a fatal error (the app ends)</td><td>non-fatal errors, unhandled rejections, <code>captureException</code></td></tr>
+            <tr><td>Flutter</td><td>framework, async and zone errors that reached juju's hooks</td><td><code>Juju.captureException</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A browser tab keeps running after an uncaught error, but something the person was doing broke, so on the web it counts as a crash. The same error object reported twice (caught, then rethrown) is still one error, but if the rethrow crashes the app, the session still ends crashed. A test covers exactly that.</p>
+    </div>
+
+    <div class="block">
+      <h3>Mobile: the background isn't the end</h3>
+      <p>The OS can kill a backgrounded app without warning, so the SDK sends the session as ended the moment the app goes to the background. If the person comes back within 30 seconds, after glancing at a message say, the same session continues with a higher <code>seq</code>. Later than that, a new one starts. On the Android emulator, pressing Home and coming back 3 s later gave session <code>bb644660</code> the updates <code>0 ok → 1 exited → 2 ok</code>, and no new session.</p>
+      <p>While offline, only the latest update of each session waits in the queue. An app switched away from fifty times on a plane sends one update when it lands, not fifty.</p>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Transactions</span>
+    <h2>Time what people wait for, then show where the time went</h2>
+    <p>A <b>transaction</b> is one thing a person waits for: a page load, an app start, a screen opening. <b>Spans</b> are the steps inside it, like an HTTP request or a script download. A slow transaction then shows its own reason: in the screenshot above, the checkout page took 1.75 s because <code>GET /api/cart</code> took 1.23 s and then failed with a 503.</p>
+    <div class="block">
+      <h3>When is a screen "loaded"?</h3>
+      <p>Most screens finish loading when their data arrives, not when they first draw. So page loads, route changes and screen loads are <b>idle transactions</b>. They stay open while requests are in flight and close once nothing has happened for 1 second. Their end is the moment the last request finished, not when the timer noticed. A transaction still open after 30 s ends as "Timed out", and requests that never answered are marked "Never finished" instead of passing for fast ones.</p>
+    </div>
+    <div class="block">
+      <h3>What each SDK times by itself</h3>
+      <div class="panel" style="padding:0">
+        <table>
+          <thead><tr><th>SDK</th><th>Automatic transactions</th><th>Spans</th></tr></thead>
+          <tbody>
+            <tr><td>Web</td><td>page load (from the navigation itself, time 0); route changes in single-page apps, named like <code>/orders/:id</code></td><td>browser phases from Navigation Timing; scripts and stylesheets; <code>fetch</code> and XHR</td></tr>
+            <tr><td>React Native</td><td>app start; a screen load per route with <code>trackNavigation</code></td><td>startup phases React Native reports; XHR (which <code>fetch</code> uses)</td></tr>
+            <tr><td>Flutter</td><td>app start; a screen load per pushed route with <code>Juju.navigatorObserver</code></td><td>process start until init, first frame; requests through <code>Juju.httpClient()</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="why"><span class="label">Why ids become ":id"</span>Every order page would otherwise be its own transaction, seen once, and a percentile over one sample means nothing. Numbers, UUIDs and long tokens with digits in a path segment become <code>:id</code>; words like <code>how-we-grew-a-garden</code> stay.</div>
+    </div>
+    <div class="block">
+      <h3>App start, measured from as early as each platform allows</h3>
+      <p>Every app start records where it was measured from, so two numbers measured from different points never get compared by mistake. Each platform gives something different, and each one was checked on a device:</p>
+      <ul>
+        <li><b>Flutter on Android</b>: from the process start. Dart reads it from <code>/proc/self/stat</code>, with no plugin. Android's own count (<code>am start -W</code>) came out 100–150 ms higher on three cold starts (1357 vs 1257, 1127 vs 1020, 1510 vs 1362 ms), because Android starts timing at the launch request, before the process exists.</li>
+        <li><b>React Native on iOS</b>: from the JavaScript runtime's start. React Native's "start time" there is the runtime's start, not the app's, so it isn't called a native start.</li>
+        <li><b>React Native on Android</b> and <b>Flutter on iOS</b>: from <code>init</code>. React Native 0.87 reported no startup times on Android, and iOS has no <code>/proc</code>. Call <code>init</code> first thing for these numbers to mean much.</li>
+      </ul>
+    </div>
+    <div class="why"><span class="label">Why percentiles, not the average</span>One 30-second outlier drags an average far away from what most people saw. p50 is the typical wait, and p95 is what the slowest 1 in 20 get, which is usually where the complaints come from.</div>
+    <div class="why"><span class="label">Why Postgres, for now</span>The roadmap puts transactions next to analytics in ClickHouse (Phase 7). The two phases were built at the same time, so this one stores both kinds of data in Postgres. Every query reads one project's time window through an index on <code>(project_id, started_at)</code>, and percentiles come from <code>percentile_cont</code>. That's fine at today's volume, and moving to a columnar store later changes the store, not the wire format or the SDKs.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Update the SDK. That's mostly it</h2>
+    <p>Sessions and timing are on by default. These are the lines that matter beyond <code>init</code>:</p>
+    <pre class="code"><span class="c">// Web: nothing more. Optional: send a quarter of page loads, time your own work</span>
+juju.init({ dsn, release: "web@2.3.1", tracesSampleRate: 0.25 });
+const tx = juju.startTransaction({ name: "checkout" });
+const span = tx.startChild({ op: "db", description: "save order" });
+span.finish(); tx.finish();
+
+<span class="c">// React Native: init at the top of index.js; screen loads come from navigation</span>
+&lt;NavigationContainer ref={ref} onReady={() =&gt; juju.trackNavigation(ref)}&gt;
+juju.appStarted(); <span class="c">// only without React Navigation: the first screen is ready</span>
+
+<span class="c">// Flutter: the observer times screens; this client times their requests</span>
+MaterialApp(navigatorObservers: [Juju.navigatorObserver])
+final api = Juju.httpClient();
+
+<span class="c">// Turn either off</span>
+init({ dsn, sessions: false, tracing: false })</pre>
+    <p>On the server, nothing to configure: the migration adds two tables, <code>app_sessions</code> and <code>transactions</code>, and both new event types use the same endpoint and key as errors.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked</h2>
+    <p>Release builds on an iPhone simulator and an Android emulator, headless Chrome for the web, curl for the server, and Playwright for the dashboard, all against a running juju server and Postgres. Every result was read back through the API and straight from the database.</p>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>Check</th><th>On</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Forced crash, server down</td><td>RN iOS release</td><td class="mono">process gone at 3 s; queue on disk: session crashed (seq 1), app.start, TypeError fatal=true; after restart each arrived once (f37f7774, 7513d6dd, 87d0f673); release 100% → 80%</td></tr>
+          <tr><td>Same, Android</td><td>RN Android release</td><td class="mono">FATAL EXCEPTION in logcat; crash event 37ed5ef6 stored once; 2 of 8 sessions crashed</td></tr>
+          <tr><td>Offline errors, app killed</td><td>Flutter Android release</td><td class="mono">"restored 6 event(s)": crashed session (2 errors), app.start, one error per mechanism, each stored once</td></tr>
+          <tr><td>Screen load with a request</td><td>Flutter Android, iOS</td><td class="mono">/cart 387 ms with GET …/config.json 234 ms [200]; on iOS 62 ms</td></tr>
+          <tr><td>Page load, healthy visit</td><td>Chrome</td><td class="mono">session exited after 5,034 ms with the user set mid-session; pageload phases continuous from 0 to load; navigation named …/orders/:id</td></tr>
+          <tr><td>Uncaught error</td><td>Chrome</td><td class="mono">session crashed with 2 errors; example@0.1.0: 3 of 4 crash-free</td></tr>
+          <tr><td>Updates out of order</td><td>curl</td><td class="mono">end (seq 2) before start (seq 0), twice → one row, exited · crash then a stale "ok" → stays crashed</td></tr>
+          <tr><td>Bad input</td><td>curl</td><td class="mono">status "errored", end before start, over 1 h, unknown type → 400 with the reason · wrong key → 401 · a good event next to a bad one is kept</td></tr>
+          <tr><td>Dashboard</td><td>Playwright, Chrome</td><td class="mono">96.1% (269 of 280), web@1.0.1 92.5%, web@1.0.0 97.5%; j → Enter → slowest sample's spans with "Server error"; Esc back; error state with Retry; 4 screens × dark, light × 1360, 390 px, read one by one</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Automated: Go table tests and a fuzz run (3.7 million inputs) for the event rules, integration tests on a real Postgres for the merge rules and queries, 151 JavaScript SDK tests, 65 Flutter tests, 68 dashboard tests, and the end-to-end run. Mutation checks broke each key rule on purpose (crashed is final, fatal means crashed, the queued-in-browser span, the /proc tick math, the iOS start-time guard and others), and a test failed every time.</p>
+    <h3>What the devices exposed</h3>
+    <div class="fixes">
+      <div class="fix"><span class="mono">Android blocks /proc/uptime</span><p>The first Flutter app start read the boot clock from <code>/proc/uptime</code>, and passed every test on a Mac. On Android, SELinux denies it to apps, so every start fell back to init. Now a tiny child process supplies "now" on the same clock, and the same launch reports <code>from_process_start</code>.</p></div>
+      <div class="fix"><span class="mono">"native start" that wasn't</span><p>On iOS, React Native's start time is the runtime's start, 3 µs from it. The SDK called that a native start and hid the native part. It now says <code>from_runtime_start</code>, and the real values are a test.</p></div>
+      <div class="fix"><span class="mono">158 ms nobody could explain</span><p>Chrome page loads had a gap before the first step. The raw timings showed the request waiting after the connection was ready. It's now its own step, "Queued in the browser".</p></div>
+      <div class="fix"><span class="mono">"GET ../../Makefile"</span><p>Spans showed URLs as written in code. After a route change those point somewhere else; this one was really <code>/examples/Makefile</code>, hence its 404. Spans now show the resolved path.</p></div>
+      <div class="fix"><span class="mono">stale SDK in the example app</span><p><code>make example-rn-deps</code> kept the old SDK when the version number hadn't changed, so a device test could run old code. It now installs the new packages by name.</p></div>
+      <div class="fix"><span class="mono">"1.01 / s" on phones</span><p>Numbers split from their units and versions broke mid-number (<code>web@1.0.</code> / <code>1</code>). Both stay on one line now. The waterfall moved above the sample list, where a phone reaches it.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>Not covered yet</h2>
+    <ul>
+      <li><strong>Native crashes</strong> (a crash in Swift, Kotlin or C++) and a phone killing the app for memory leave no report, so those sessions stay "ok" and count as crash-free. Catching them needs native code in the SDKs.</li>
+      <li><strong>App start on iOS and React Native Android</strong> starts at the JavaScript runtime or at <code>init</code>, not at the tap on the icon. A native module could record the earlier moment.</li>
+      <li><strong>Sampling</strong> is a fixed share per SDK (<code>tracesSampleRate</code>). There are no server-side quotas yet; that's Phase 9.</li>
+      <li><strong>Storage</strong> is Postgres with no retention job yet, so rows accumulate. Moving transactions into the ClickHouse that Phase 7 added, plus retention, are the next steps.</li>
+      <li><strong>No alerts</strong> on a falling crash-free rate or a slower p95 yet, and no release-health API for scripts (to stop a rollout in CI).</li>
+      <li><strong>Session replay</strong> (rrweb) from the roadmap isn't started.</li>
+    </ul>
+  </section>
+
+  <footer>Part of the juju project docs. See the <a href="https://francisije.github.io/juju/">roadmap</a>, the <a href="https://francisije.github.io/juju/dashboard.html">dashboard</a>, and the <a href="https://francisije.github.io/juju/web-sdk.html">web</a>, <a href="https://francisije.github.io/juju/react-native-sdk.html">React Native</a> and <a href="https://francisije.github.io/juju/flutter-sdk.html">Flutter</a> SDK pages.</footer>
+</div>
+
+<script>
+(function () {
+  // Screenshots from the Playwright run against a fresh server (Chrome, 1360 px wide).
+  var screens = {
+    releases: { file: "10-releases", alt: "Release health", caption: "280 sessions in a week: 96.1% crash-free. web@1.0.1 (92.5%) crashes more than web@1.0.0 (97.5%). The chart starts just below the lowest day, because the story is between 92 and 100%." },
+    performance: { file: "11-performance", alt: "The performance list", caption: "Each kind of transaction with its count and p50, p75 and p95, sorted by how often it happens. j and k move, Enter opens." },
+    transaction: { file: "12-transaction", alt: "One transaction: /checkout", caption: "/checkout got slower in web@1.0.1: p95 in violet against p50 in gray, where the time goes by kind of step, and the two releases side by side." },
+    waterfall: { file: "13-waterfall", alt: "The slowest sample's spans", caption: "The slowest page load, step by step. The cart request took 1.23 s and failed with a 503: a red bar and the words \"Server error\", never color alone." }
+  };
+  var state = { screen: "releases", theme: "dark" };
+  try {
+    var t = document.documentElement.getAttribute("data-theme");
+    state.theme = t === "light" || t === "dark" ? t : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch (e) {}
+  var img = document.getElementById("shot");
+  var caption = document.getElementById("shot-caption");
+  function render() {
+    var s = screens[state.screen];
+    img.src = "img/performance/" + s.file + "-" + state.theme + ".jpg";
+    img.alt = s.alt + " in " + state.theme + " mode";
+    caption.textContent = s.caption;
+    document.querySelectorAll("[data-screen]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.screen === state.screen)); });
+    document.querySelectorAll("[data-theme-pick]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.themePick === state.theme)); });
+  }
+  document.querySelectorAll("[data-screen]").forEach(function (b) { b.addEventListener("click", function () { state.screen = b.dataset.screen; render(); }); });
+  document.querySelectorAll("[data-theme-pick]").forEach(function (b) { b.addEventListener("click", function () { state.theme = b.dataset.themePick; render(); }); });
+  render();
+
+  // Session replay: the server's merge rules (server/internal/store/performance.go)
+  // applied to the same updates in different arrival orders.
+  var start = { seq: 0, status: "ok", errors: 0 };
+  var errored = { seq: 1, status: "ok", errors: 2 };
+  var end = { seq: 2, status: "exited", errors: 2, duration: "4m 10s" };
+  var crash = { seq: 1, status: "crashed", errors: 1, duration: "40s" };
+  var orders = {
+    tidy: { list: [start, errored, end], note: "The usual case: start, an update after two errors, the end." },
+    late: { list: [end, errored, start], note: "The start arrived last (an offline phone sending its queue). It has the lowest seq, so it changes nothing: the row is the same." },
+    retry: { list: [start, errored, errored, end, end], note: "Two sends were retried after a timeout. The repeats change nothing: the row is the same." },
+    crash: { list: [start, crash, { seq: 0, status: "ok", errors: 0 }], note: "A stale \"ok\" arrived after the crash. Crashed is final, so the session stays crashed." }
+  };
+  function merge(list) {
+    var row = null;
+    return list.map(function (u) {
+      if (!row) { row = { status: u.status, seq: u.seq, errors: u.errors, duration: u.duration || "–" }; return true; }
+      var changed = false;
+      var status = row.status === "crashed" || u.status === "crashed" ? "crashed" : u.seq >= row.seq ? u.status : row.status;
+      if (status !== row.status) { row.status = status; changed = true; }
+      if (u.seq > row.seq) { row.seq = u.seq; changed = true; if (u.duration) row.duration = u.duration; }
+      if (u.errors > row.errors) { row.errors = u.errors; changed = true; }
+      return changed;
+    }).concat([row]);
+  }
+  var updatesEl = document.getElementById("updates");
+  var rowEl = document.getElementById("row-out");
+  var noteEl = document.getElementById("replay-note");
+  function chip(status, extra) {
+    var c = document.createElement("span");
+    c.className = "chip " + (extra || status);
+    c.textContent = extra === "ignored" ? "no change" : status;
+    return c;
+  }
+  function renderReplay(name) {
+    var o = orders[name];
+    var res = merge(o.list);
+    var row = res.pop();
+    updatesEl.textContent = "";
+    o.list.forEach(function (u, i) {
+      var line = document.createElement("div");
+      line.className = "upd";
+      var n = document.createElement("span"); n.className = "n"; n.textContent = (i + 1) + ".";
+      var body = document.createElement("span"); body.textContent = "seq " + u.seq + " · status " + u.status + " · errors " + u.errors;
+      line.append(n, body, res[i] ? chip(u.status) : chip(u.status, "ignored"));
+      updatesEl.append(line);
+    });
+    rowEl.textContent = "";
+    [["status", row.status], ["seq", String(row.seq)], ["errors", String(row.errors)], ["duration", row.duration]].forEach(function (kv) {
+      var d = document.createElement("div");
+      var l = document.createElement("span"); l.className = "label"; l.textContent = kv[0];
+      var v = document.createElement("b"); v.textContent = kv[1];
+      d.append(l, v);
+      rowEl.append(d);
+    });
+    noteEl.textContent = o.note;
+    document.querySelectorAll("[data-order]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.order === name)); });
+  }
+  document.querySelectorAll("[data-order]").forEach(function (b) { b.addEventListener("click", function () { renderReplay(b.dataset.order); }); });
+  renderReplay("tidy");
+})();
+</script>

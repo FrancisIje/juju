@@ -67,7 +67,8 @@ func TestNormalizeRejects(t *testing.T) {
 		{"missing event_id", with(func(m map[string]any) { delete(m, "event_id") }), "event_id"},
 		{"event_id not a uuid", with(func(m map[string]any) { m["event_id"] = "abc" }), "event_id"},
 		{"nil uuid", with(func(m map[string]any) { m["event_id"] = "00000000-0000-0000-0000-000000000000" }), "event_id"},
-		{"unknown type", with(func(m map[string]any) { m["type"] = "pageview" }), "type"},
+		{"unknown type", with(func(m map[string]any) { m["type"] = "profile" }), "type"},
+		{"another unknown type", with(func(m map[string]any) { m["type"] = "pageview" }), "type"},
 		{"missing exception", with(func(m map[string]any) { delete(m, "exception") }), "exception"},
 		{"exception without type or message", with(func(m map[string]any) {
 			m["exception"] = map[string]any{"type": " ", "message": ""}
@@ -283,6 +284,10 @@ func FuzzNormalize(f *testing.F) {
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`null`))
 	f.Add([]byte(`{"event_id":"` + validID + `","type":"error","exception":{"message":"x"},"tags":{"":""}}`))
+	session, _ := json.Marshal(validSession())
+	f.Add(session)
+	transaction, _ := json.Marshal(validTransaction())
+	f.Add(transaction)
 	f.Add([]byte(`{"event_id":"` + validID + `","type":"event","name":"signup","distinct_id":"a","properties":{"n":1,"o":{"x":[1,null]},"":true}}`))
 	f.Add([]byte(`{"event_id":"` + validID + `","type":"identify","distinct_id":"u1","anon_id":"a"}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
@@ -290,10 +295,20 @@ func FuzzNormalize(f *testing.F) {
 		if err != nil {
 			return
 		}
+		if len(e.Tags) > maxTags || len(e.Breadcrumbs) > maxBreadcrumbs {
+			t.Fatalf("limits not enforced: %+v", e)
+		}
+		// Exactly one payload, the one matching the type.
+		switch {
+		case e.Type == TypeError && (e.Exception == nil || e.Session != nil || e.Transaction != nil || e.DistinctID != ""),
+			e.IsAnalytics() && (e.Exception != nil || e.Session != nil || e.Transaction != nil),
+			e.Type == TypeSession && (e.Session == nil || e.Exception != nil || e.Transaction != nil || e.DistinctID != ""),
+			e.Type == TypeTransaction && (e.Transaction == nil || e.Exception != nil || e.Session != nil || e.DistinctID != ""):
+			t.Fatalf("type %q with the wrong payload: %+v", e.Type, e)
+		}
 		if e.IsAnalytics() {
-			// Analytics: someone did it, nothing that could become an issue,
-			// and every property is short text.
-			if e.DistinctID == "" || e.Exception != nil || len(e.Properties) > maxProperties {
+			// Analytics: someone did it, and every property is short text.
+			if e.DistinctID == "" || len(e.Properties) > maxProperties {
 				t.Fatalf("analytics rules not enforced: %+v", e)
 			}
 			for k, v := range e.Properties {
@@ -301,12 +316,23 @@ func FuzzNormalize(f *testing.F) {
 					t.Fatalf("property %q = %#v", k, v)
 				}
 			}
-		} else {
-			if len(e.Exception.Message) > maxMessageBytes || len(e.Tags) > maxTags || len(e.Breadcrumbs) > maxBreadcrumbs {
-				t.Fatalf("limits not enforced: %+v", e)
+		}
+		if ex := e.Exception; ex != nil {
+			if len(ex.Message) > maxMessageBytes {
+				t.Fatalf("message of %d bytes", len(ex.Message))
 			}
-			if st := e.Exception.Stacktrace; st != nil && len(st.Frames) > maxFrames {
+			if st := ex.Stacktrace; st != nil && len(st.Frames) > maxFrames {
 				t.Fatalf("%d frames", len(st.Frames))
+			}
+		}
+		if tx := e.Transaction; tx != nil {
+			if tx.DurationMs < 0 || len(tx.Spans) > maxSpans {
+				t.Fatalf("duration %v, %d spans", tx.DurationMs, len(tx.Spans))
+			}
+			for _, sp := range tx.Spans {
+				if sp.DurationMs < 0 {
+					t.Fatalf("span with negative duration: %+v", sp)
+				}
 			}
 		}
 		if _, err := time.Parse(time.RFC3339Nano, e.Timestamp); err != nil {

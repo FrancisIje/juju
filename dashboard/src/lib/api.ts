@@ -204,3 +204,111 @@ export interface InviteInfo {
   invited_by: string;
   expires_at: string;
 }
+
+// Phase 8: release health and performance. Mirror server/internal/store/performance.go.
+
+export type Period = "24h" | "7d" | "14d" | "30d";
+
+export interface SessionStats {
+  sessions: number;
+  crashed: number;
+  errored: number;
+  users: number;
+  crashed_users: number;
+  /** 0 to 1; null when there were no sessions (unknown is not 100 %). */
+  crash_free_sessions: number | null;
+  crash_free_users: number | null;
+}
+
+export interface ReleaseRow extends SessionStats {
+  release: string;
+  /** This release's share of all sessions in the period, 0 to 1. */
+  adoption: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface SessionPoint {
+  time: string;
+  sessions: number;
+  crashed: number;
+  errored: number;
+}
+
+export interface ReleaseHealth {
+  totals: SessionStats;
+  releases: ReleaseRow[];
+  series: SessionPoint[];
+  environments: string[];
+}
+
+export interface TransactionRow {
+  name: string;
+  op: string;
+  count: number;
+  p50: number;
+  p75: number;
+  p95: number;
+  failed: number;
+  last_seen: string;
+}
+
+export interface TransactionList {
+  transactions: TransactionRow[];
+  ops: string[];
+  environments: string[];
+}
+
+export interface TimingPoint {
+  time: string;
+  count: number;
+  p50: number | null;
+  p95: number | null;
+}
+
+export interface TransactionSample {
+  event_id: string;
+  started_at: string;
+  duration_ms: number;
+  status: string;
+  release: string;
+  environment: string;
+  platform: string;
+  spans: number;
+}
+
+export interface TransactionDetail {
+  summary: TransactionRow;
+  series: TimingPoint[];
+  releases: { release: string; count: number; p50: number; p95: number }[];
+  span_ops: { op: string; count: number; p50: number; p95: number; per_transaction: number }[];
+  samples: TransactionSample[];
+}
+
+export interface SpanPayload {
+  span_id: string;
+  op: string;
+  description?: string;
+  status?: string;
+  start_ms: number;
+  duration_ms: number;
+  data?: Record<string, unknown>;
+}
+
+export interface TransactionPayload {
+  event_id: string;
+  timestamp: string;
+  platform: string;
+  release?: string;
+  environment: string;
+  context?: Record<string, unknown>;
+  transaction: {
+    name: string;
+    op: string;
+    status: string;
+    start_timestamp: string;
+    duration_ms: number;
+    measurements?: Record<string, number>;
+    spans?: SpanPayload[];
+  };
+}

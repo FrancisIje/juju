@@ -4,7 +4,7 @@ import { KEEPALIVE_LIMIT, type Client } from "@juju/core";
  * Makes sure queued events survive the page going away, and get sent as
  * soon as the network comes back.
  */
-export function installLifecycle(client: Client): () => void {
+export function installLifecycle(client: Client, sessions = true): () => void {
   // visibilitychange to "hidden" is the last event browsers reliably fire
   // before a tab is closed, backgrounded or discarded. The older "unload"
   // event often never fires on mobile (for example when switching apps).
@@ -12,16 +12,30 @@ export function installLifecycle(client: Client): () => void {
     if (document.visibilityState === "hidden") sendWithBeacon(client);
   };
 
+  // The page is going away (closed, reloaded, navigated off). Its session
+  // ends here; switching tabs only hides it, which isn't an end.
+  const onPageHide = () => {
+    if (sessions) client.endSession();
+    sendWithBeacon(client);
+  };
+  // Back from the back/forward cache: the same page, but a new visit.
+  const onPageShow = (ev: Event) => {
+    if (sessions && (ev as PageTransitionEvent).persisted) client.startSession();
+  };
+
   // The browser tells us when the network is back. Don't wait out the
   // backoff timer: send now.
   const onOnline = () => client.retryNow();
 
+  if (sessions) client.startSession(); // one session per page load
   document.addEventListener("visibilitychange", onVisibility);
-  window.addEventListener("pagehide", onVisibility); // older Safari fires this instead
+  window.addEventListener("pagehide", onPageHide); // older Safari fires only this, not visibilitychange
+  window.addEventListener("pageshow", onPageShow);
   window.addEventListener("online", onOnline);
   return () => {
     document.removeEventListener("visibilitychange", onVisibility);
-    window.removeEventListener("pagehide", onVisibility);
+    window.removeEventListener("pagehide", onPageHide);
+    window.removeEventListener("pageshow", onPageShow);
     window.removeEventListener("online", onOnline);
   };
 }

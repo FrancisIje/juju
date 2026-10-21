@@ -8,14 +8,6 @@ import (
 	"strings"
 )
 
-// Event types. "error" goes to issues; "event" and "identify" go to product
-// analytics (ClickHouse).
-const (
-	TypeError    = "error"
-	TypeEvent    = "event"
-	TypeIdentify = "identify"
-)
-
 const (
 	maxEventName     = 200
 	maxDistinctID    = 200

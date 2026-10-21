@@ -72,8 +72,63 @@ export interface IdentifyEvent {
   context?: Record<string, unknown>;
 }
 
+/** One update to an app session. See server/internal/event/performance.go. */
+export interface SessionData {
+  sid: string;
+  /** Increases with every update, so the server can tell a late update from a new one. */
+  seq: number;
+  /** "crashed" is final: the server ignores anything after it. */
+  status: "ok" | "exited" | "crashed";
+  started: string;
+  errors: number;
+  duration_ms?: number;
+}
+
+export interface SessionEvent {
+  event_id: string;
+  type: "session";
+  timestamp: string;
+  platform: string;
+  release?: string;
+  environment?: string;
+  user?: User;
+  session: SessionData;
+}
+
+export interface SpanData {
+  span_id: string;
+  parent_span_id?: string;
+  op: string;
+  description?: string;
+  status?: string;
+  start_timestamp: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
+export interface TransactionEvent {
+  event_id: string;
+  type: "transaction";
+  /** When the transaction ended. */
+  timestamp: string;
+  platform: string;
+  release?: string;
+  environment?: string;
+  user?: User;
+  tags?: Record<string, string>;
+  context?: Record<string, unknown>;
+  transaction: {
+    name: string;
+    op: string;
+    status: string;
+    start_timestamp: string;
+    measurements?: Record<string, number>;
+    spans?: SpanData[];
+  };
+}
+
 /** Everything the SDK queues and sends. */
-export type OutgoingEvent = JujuEvent | AnalyticsEvent | IdentifyEvent;
+export type OutgoingEvent = JujuEvent | AnalyticsEvent | IdentifyEvent | SessionEvent | TransactionEvent;
 
 export interface SdkInfo {
   name: string;

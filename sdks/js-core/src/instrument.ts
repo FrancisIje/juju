@@ -1,4 +1,5 @@
 import type { Client } from "./client";
+import type { Span } from "./tracing";
 
 // Breadcrumb sources that exist on more than one platform: console is
 // everywhere, and XMLHttpRequest exists in browsers and in React Native
@@ -38,7 +39,11 @@ interface XHRLike {
   };
 }
 
-export function instrumentXHR(client: Client, isJujuUrl: (url: string) => boolean, XHR: XHRLike | undefined): Uninstall {
+/**
+ * describeUrl names a request's span; the web passes one that resolves
+ * relative URLs against the page, so the span shows what was requested.
+ */
+export function instrumentXHR(client: Client, isJujuUrl: (url: string) => boolean, XHR: XHRLike | undefined, describeUrl: (url: string) => string = redact): Uninstall {
   if (!XHR) return () => {};
   const proto = XHR.prototype as unknown as {
     open: (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) => void;
@@ -59,6 +64,9 @@ export function instrumentXHR(client: Client, isJujuUrl: (url: string) => boolea
     // every send, and on failure could feed back into itself.
     if (req && !isJujuUrl(req.url)) {
       const started = Date.now();
+      // A span in the transaction that's running (a page or screen load),
+      // if any, so slow requests show up as the reason it was slow.
+      const span = client.startSpan({ op: "http.client", description: `${req.method} ${describeUrl(req.url)}`, data: { method: req.method, url: describeUrl(req.url) } });
       this.addEventListener("loadend", () => {
         const status = this.status || "failed";
         client.addBreadcrumb({
@@ -66,6 +74,7 @@ export function instrumentXHR(client: Client, isJujuUrl: (url: string) => boolea
           message: `${req.method} ${redact(req.url)} → ${status}`,
           data: { method: req.method, url: redact(req.url), status, duration_ms: Date.now() - started },
         });
+        finishHttpSpan(span, this.status);
       });
     }
     return originalSend.call(this, body);
@@ -75,6 +84,12 @@ export function instrumentXHR(client: Client, isJujuUrl: (url: string) => boolea
     proto.open = originalOpen;
     proto.send = originalSend;
   };
+}
+
+/** Ends an HTTP span with its status code; 0 means the request never got an answer. */
+export function finishHttpSpan(span: Span, status: number): void {
+  if (status) span.setData("status_code", status);
+  span.setStatus(status === 0 ? "failed" : status >= 500 ? "error" : "ok").finish();
 }
 
 /** Drops the query string and fragment, which often carry tokens. */

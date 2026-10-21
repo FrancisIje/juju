@@ -61,6 +61,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/ui/projects/{project}/live", p(a.live))
 
 	a.registerTeam(mux)
+	a.registerPerformance(mux)
 	a.registerAnalytics(mux)
 }
 

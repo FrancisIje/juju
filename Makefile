@@ -57,7 +57,9 @@ example-rn-deps: ## Build and pack the SDKs, then install them into examples/rea
 	cd sdks && npm install && npm run build
 	mkdir -p examples/react-native/vendor
 	cd sdks && npm pack -w @juju/core -w @juju/react-native --pack-destination ../examples/react-native/vendor
-	cd examples/react-native && npm install
+	# Name the tarballs: a plain `npm install` keeps the old SDK when the
+	# version number hasn't changed, and the app would run stale code.
+	cd examples/react-native && npm install ./vendor/juju-core-*.tgz ./vendor/juju-react-native-*.tgz
 
 flutter-test: ## Format check, analyze and test the Flutter SDK
 	cd sdks/flutter && flutter pub get && dart format --set-exit-if-changed lib test && flutter analyze && flutter test
