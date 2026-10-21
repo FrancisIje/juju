@@ -98,6 +98,9 @@ jobs:
         run: go test -race -count=1 -tags=integration ./...
       - name: Fuzz the event parser
         run: go test ./internal/event -run='^$' -fuzz=FuzzNormalize -fuzztime=20s
+      # go test fuzzes one target per run, so the PII scrubber gets its own.
+      - name: Fuzz the PII scrubber
+        run: go test ./internal/event -run='^$' -fuzz=FuzzScrub -fuzztime=20s
 
   dashboard:
     runs-on: ubuntu-latest

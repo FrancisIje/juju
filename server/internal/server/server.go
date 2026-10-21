@@ -37,19 +37,29 @@ import (
 type Deps struct {
 	Pool      *pgxpool.Pool
 	Store     *store.Store
-	Queue     queue.Queue
+	Queue     queue.Publisher
 	Blobs     *blob.Store
 	MaxUpload int64
 	Auth      *auth.Service
 	Alerts    *alert.Notifier
 	Live      *live.Hub
+	// Changes announces issue changes to every API process (the live Bus).
+	// Nil: Live directly, for a single process.
+	Changes   interface{ Changed(projectID int64) }
 	Analytics *analytics.Client // nil: analytics off
-	Config    config.Config
-	Log       *slog.Logger
+	// QueueReady reports whether the queue can be reached, for /readyz.
+	QueueReady func() bool
+	Limits     *ingest.Limits // nil: no rate limits or quotas
+	Config     config.Config
+	Log        *slog.Logger
 }
 
 func Routes(d Deps) http.Handler {
 	pool, st, q, blobs, maxUpload, log := d.Pool, d.Store, d.Queue, d.Blobs, d.MaxUpload, d.Log
+	roles := d.Config.Roles
+	if roles == (config.Roles{}) {
+		roles = config.Roles{Ingest: true, Worker: true, API: true} // tests: everything, as before roles existed
+	}
 	mux := http.NewServeMux()
 
 	// Liveness: "is the process up?" Never touches the database, so a
@@ -61,104 +71,161 @@ func Routes(d Deps) http.Handler {
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		if pool != nil {
+			if err := pool.Ping(ctx); err != nil {
+				http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		if d.QueueReady != nil && !d.QueueReady() {
+			http.Error(w, "queue unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Write([]byte("ready\n"))
 	})
 
-	mux.HandleFunc("OPTIONS /api/v1/projects/{id}/events", ingest.Preflight)
-	mux.Handle("POST /api/v1/projects/{id}/events", &ingest.Handler{
-		Keys: st, Queue: q, Log: log, Now: time.Now,
-	})
-	(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, Log: log}).Register(mux)
-	(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, Live: d.Live, Analytics: d.Analytics, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
-	// Everything else is the dashboard. More specific patterns (above) win,
-	// and an unknown /api/ path must be a JSON 404, not the app's HTML.
+	if roles.Ingest {
+		mux.HandleFunc("OPTIONS /api/v1/projects/{id}/events", ingest.Preflight)
+		mux.Handle("POST /api/v1/projects/{id}/events", &ingest.Handler{
+			Projects: &ingest.ProjectCache{Src: st, TTL: 30 * time.Second, Now: time.Now},
+			Limits:   d.Limits, KeepPII: d.Config.KeepPII, Queue: q, Log: log, Now: time.Now,
+		})
+	}
+	if roles.API {
+		(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, Log: log}).Register(mux)
+		(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, Live: d.Live, Changes: d.Changes, Analytics: d.Analytics, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, Log: log}).Register(mux)
+	}
+	// An unknown /api/ path must be a JSON 404, not the app's HTML. On an
+	// ingest-only process that's every API but ingest.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "no such API route")
 	})
-	mux.Handle("/", web.Handler())
+	if roles.API {
+		mux.Handle("/", web.Handler()) // everything else is the dashboard
+	}
 	return mux
 }
 
 // Run serves HTTP and runs workers until ctx is cancelled (Ctrl-C/SIGTERM),
-// then shuts down in an order that loses no accepted events:
+// running the parts cfg.Roles asks for.
+//
+// Events go through a durable queue (JetStream): ingest answers 202 only
+// after an event is stored there, and a worker acknowledges it only after
+// it's in Postgres. So a crash, kill -9 or restart at any point loses
+// nothing: unacknowledged events are delivered again. Shutdown is still
+// orderly, to avoid needless redelivery:
 //
 //  1. stop accepting HTTP requests and finish in-flight ones
-//  2. close the queue: nothing can send to it any more
-//  3. let workers drain what is buffered
-//
-// Doing 2 before 1 would panic: a handler sending on a closed channel.
+//  2. stop taking events from the queue; hand back any not yet started
+//  3. let workers finish (and acknowledge) the events in their hands
+//  4. flush alerts and analytics, then close the queue
 func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) error {
+	roles := cfg.Roles
+	if roles == (config.Roles{}) {
+		roles = config.Roles{Ingest: true, Worker: true, API: true}
+	}
 	st := store.New(pool)
-	q := queue.NewChan(cfg.QueueSize)
 	blobs, err := blob.New(filepath.Join(cfg.DataDir, "blobs"))
 	if err != nil {
 		return err
 	}
-	sym := &symbolicate.Service{Files: symbolicate.StoredFiles{Store: st, Blobs: blobs}, Log: log}
-	alerts := &alert.Notifier{
-		Settings:          st,
-		SMTP:              alert.SMTPConfig{Addr: cfg.SMTPAddr, Username: cfg.SMTPUser, Password: cfg.SMTPPassword, From: cfg.SMTPFrom},
-		PublicURL:         cfg.PublicURL,
-		AllowHTTPWebhooks: cfg.AllowHTTPWebhooks,
-		Log:               log,
-	}
-	alerts.Start(2)
-	hub := live.NewHub()
 
-	// Product analytics, if ClickHouse is configured. juju starts either way:
-	// errors are the core job, so a ClickHouse that's down or slow to start
-	// mustn't stop them. Tables are created in the background, retrying, and
-	// the writer holds events until it can write them.
-	var ch *analytics.Client
-	var chWriter *analytics.Writer
-	if cfg.ClickHouseURL != "" {
-		ch = &analytics.Client{URL: cfg.ClickHouseURL, User: cfg.ClickHouseUser, Password: cfg.ClickHousePassword, Database: cfg.ClickHouseDatabase}
-		chWriter = &analytics.Writer{Client: ch, Log: log}
-		chWriter.Start()
-		go func() {
-			for attempt := 1; ; attempt++ {
-				err := ch.Migrate(ctx)
-				if err == nil {
-					log.Info("analytics on", "clickhouse", cfg.ClickHouseURL)
-					return
-				}
-				if ctx.Err() != nil {
-					return
-				}
-				if attempt == 1 || attempt%12 == 0 {
-					log.Error("analytics: can't set up ClickHouse yet, retrying every 5s", "err", err)
-				}
-				select {
-				case <-time.After(5 * time.Second):
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-	} else {
-		log.Info("analytics off: set JUJU_CLICKHOUSE_URL to turn it on")
+	var q *queue.JetStream
+	if roles.Ingest || roles.Worker || cfg.NATSURL != "" {
+		q, err = queue.OpenJetStream(ctx, queue.JetStreamConfig{
+			URL: cfg.NATSURL, Dir: filepath.Join(cfg.DataDir, "queue"), MaxBytes: int64(cfg.QueueMaxMB) << 20,
+			Fetch: max(16, 4*cfg.Workers), Log: log,
+		})
+		if err != nil {
+			return fmt.Errorf("queue: %w", err)
+		}
+		where := cfg.NATSURL
+		if where == "" {
+			where = "embedded, in " + filepath.Join(cfg.DataDir, "queue")
+		}
+		pending, _ := q.Pending(ctx)
+		log.Info("queue ready", "nats", where, "waiting", pending)
 	}
-	var analyticsSink worker.Analytics
-	if chWriter != nil {
-		analyticsSink = chWriter
-	}
-	authSvc := &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}
-
-	workersDone := make(chan struct{})
-	go func() {
-		// Workers get a fresh context, not ctx: they must keep writing
-		// while draining after ctx is cancelled.
-		worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Analytics: analyticsSink, Live: hub, Log: log}, cfg.Workers)
-		close(workersDone)
+	defer func() {
+		if q != nil {
+			q.Close()
+		}
 	}()
 
+	hub := live.NewHub()
+	var bus *live.Bus
+	var changes interface{ Changed(int64) } = hub
+	if q != nil {
+		bus = &live.Bus{NC: q.Conn(), Log: log}
+		changes = bus
+		if roles.API {
+			if _, err := bus.Deliver(hub); err != nil {
+				return fmt.Errorf("live updates: %w", err)
+			}
+		}
+	}
+
+	var alerts *alert.Notifier
+	var ch *analytics.Client
+	var chWriter *analytics.Writer
+	if roles.API || roles.Worker {
+		alerts = &alert.Notifier{
+			Settings:          st,
+			SMTP:              alert.SMTPConfig{Addr: cfg.SMTPAddr, Username: cfg.SMTPUser, Password: cfg.SMTPPassword, From: cfg.SMTPFrom},
+			PublicURL:         cfg.PublicURL,
+			AllowHTTPWebhooks: cfg.AllowHTTPWebhooks,
+			Log:               log,
+		}
+		alerts.Start(2)
+		ch, chWriter = startAnalytics(ctx, cfg, roles, log)
+	}
+
+	if roles.Worker {
+		go runRetention(ctx, st, cfg.RetentionDays, log)
+	}
+
+	workersDone := make(chan struct{})
+	if roles.Worker {
+		sym := &symbolicate.Service{Files: symbolicate.StoredFiles{Store: st, Blobs: blobs}, Log: log}
+		var analyticsSink worker.Analytics
+		if chWriter != nil {
+			analyticsSink = chWriter
+		}
+		go func() {
+			// Workers get a fresh context, not ctx: they must finish the
+			// event in hand after ctx is cancelled.
+			worker.Run(context.Background(), q, worker.Deps{Store: st, Symbolicator: sym, Alerter: alerts, Analytics: analyticsSink, Live: changes, Log: log}, cfg.Workers)
+			close(workersDone)
+		}()
+	} else {
+		close(workersDone)
+	}
+
+	// Rate limits and quotas live in ingest. Usage counts are written to
+	// Postgres every few seconds, and once more at shutdown.
+	var limits *ingest.Limits
+	limitsDone := make(chan struct{})
+	limitsCtx, stopLimits := context.WithCancel(context.Background())
+	defer stopLimits()
+	if roles.Ingest {
+		limits = &ingest.Limits{DefaultRate: cfg.RateLimit, Usage: st, Now: time.Now, Log: log}
+		go func() {
+			limits.Run(limitsCtx, 5*time.Second)
+			close(limitsDone)
+		}()
+	} else {
+		close(limitsDone)
+	}
+
+	var publisher queue.Publisher
+	var queueReady func() bool
+	if q != nil {
+		publisher = q
+		queueReady = func() bool { return q.Conn().IsConnected() }
+	}
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: q, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: authSvc, Alerts: alerts, Live: hub, Analytics: ch, Config: cfg, Log: log}),
+		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: publisher, QueueReady: queueReady, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}, Alerts: alerts, Live: hub, Changes: changes, Analytics: ch, Limits: limits, Config: cfg, Log: log}),
 		ReadHeaderTimeout: 5 * time.Second,  // slow clients can't hold connections open forever
 		ReadTimeout:       30 * time.Second, // a 1 MB body on a bad mobile network
 		WriteTimeout:      30 * time.Second,
@@ -169,38 +236,109 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	srv.RegisterOnShutdown(hub.Close)
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
-		q.Close()
 		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
 	}
-	log.Info("juju listening", "addr", ln.Addr().String(), "workers", cfg.Workers, "queue_size", cfg.QueueSize)
+	log.Info("juju listening", "addr", ln.Addr().String(), "roles", roles.String(), "workers", cfg.Workers)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
 
+	var runErr error
 	select {
-	case err := <-serveErr:
-		q.Close()
-		<-workersDone
-		alerts.Stop()
-		if chWriter != nil {
-			chWriter.Stop()
-		}
-		return err
+	case runErr = <-serveErr:
 	case <-ctx.Done():
+		log.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("http shutdown", "err", err)
+		}
 	}
-
-	log.Info("shutting down", "queued_events", q.Len())
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Error("http shutdown", "err", err)
+	stopLimits() // no more requests: write the last usage counts
+	<-limitsDone
+	if roles.Worker {
+		q.StopDeliveries()
 	}
-	q.Close()
 	<-workersDone
-	alerts.Stop() // after the workers: they may have just queued alerts
+	if alerts != nil {
+		alerts.Stop() // after the workers: they may have just queued alerts
+	}
 	if chWriter != nil {
 		chWriter.Stop() // after the workers too: writes what they handed over
 	}
-	log.Info("shutdown complete")
-	return nil
+	if q != nil {
+		left, _ := q.Pending(context.Background())
+		log.Info("shutdown complete", "events_waiting_in_queue", left)
+	}
+	return runErr
+}
+
+// runRetention deletes expired data every hour until ctx is done. It runs
+// on every worker process; a Postgres advisory lock makes sure only one of
+// them works at a time (see store.DeleteExpired). The first run waits a
+// minute, so a deploy's restart isn't also a burst of deletes.
+func runRetention(ctx context.Context, st *store.Store, days int, log *slog.Logger) {
+	wait := time.Minute
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = time.Hour
+		now := time.Now()
+		var before time.Time // zero time: nothing is older, so data is kept
+		if days > 0 {
+			before = now.AddDate(0, 0, -days)
+		}
+		start := time.Now()
+		d, ran, err := st.DeleteExpired(ctx, before, now, 5000)
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Error("retention", "err", err, "deleted", d)
+			}
+			continue
+		}
+		if ran {
+			log.Info("retention", "older_than_days", days, "deleted", d, "took", time.Since(start).Round(time.Millisecond).String())
+		}
+	}
+}
+
+// startAnalytics connects to ClickHouse if configured. juju starts either
+// way: errors are the core job, so a ClickHouse that's down or slow to start
+// mustn't stop them. Tables are created in the background, retrying, and the
+// writer (on workers) holds events until it can write them.
+func startAnalytics(ctx context.Context, cfg config.Config, roles config.Roles, log *slog.Logger) (*analytics.Client, *analytics.Writer) {
+	if cfg.ClickHouseURL == "" {
+		log.Info("analytics off: set JUJU_CLICKHOUSE_URL to turn it on")
+		return nil, nil
+	}
+	ch := &analytics.Client{URL: cfg.ClickHouseURL, User: cfg.ClickHouseUser, Password: cfg.ClickHousePassword, Database: cfg.ClickHouseDatabase, RetentionDays: cfg.AnalyticsRetentionDays}
+	var w *analytics.Writer
+	if roles.Worker {
+		w = &analytics.Writer{Client: ch, Log: log}
+		w.Start()
+	}
+	go func() {
+		for attempt := 1; ; attempt++ {
+			err := ch.Migrate(ctx)
+			if err == nil {
+				log.Info("analytics on", "clickhouse", cfg.ClickHouseURL)
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if attempt == 1 || attempt%12 == 0 {
+				log.Error("analytics: can't set up ClickHouse yet, retrying every 5s", "err", err)
+			}
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ch, w
 }

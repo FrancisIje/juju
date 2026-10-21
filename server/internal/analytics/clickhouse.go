@@ -30,7 +30,10 @@ type Client struct {
 	User     string
 	Password string
 	Database string // default "juju"
-	HTTP     *http.Client
+	// RetentionDays: analytics events older than this are deleted by
+	// ClickHouse itself (a table TTL, set by Migrate). 0 keeps them forever.
+	RetentionDays int
+	HTTP          *http.Client
 }
 
 func (c *Client) db() string {

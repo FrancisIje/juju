@@ -64,6 +64,41 @@ func (c *Client) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	return c.setRetention(ctx)
+}
+
+// setRetention makes the events table's TTL match RetentionDays.
+//
+// A TTL is ClickHouse deleting old rows itself, during the background
+// merges it does anyway: no job, no DELETE scanning the table.
+// ttl_only_drop_parts makes it drop whole parts once every row in them has
+// expired, instead of rewriting parts to remove a few rows. Parts never
+// span months (PARTITION BY month), so data goes in whole months, up to a
+// month after its day: far cheaper, and retention is a minimum anyway.
+//
+// It runs on every start, so it only alters the table when the TTL is
+// different: changing a TTL makes ClickHouse recheck every part.
+func (c *Client) setRetention(ctx context.Context) error {
+	out, err := c.do(ctx, `SELECT engine_full FROM system.tables WHERE database = {db:String} AND name = 'events' FORMAT TSVRaw`,
+		map[string]string{"db": c.db()}, nil)
+	if err != nil {
+		return err
+	}
+	current := string(out)
+	want := fmt.Sprintf("TTL toDateTime(timestamp) + toIntervalDay(%d)", c.RetentionDays)
+	switch {
+	case c.RetentionDays > 0 && !strings.Contains(current, want):
+		if err := c.Exec(ctx, fmt.Sprintf(`ALTER TABLE events MODIFY TTL toDateTime(timestamp) + INTERVAL %d DAY`, c.RetentionDays)); err != nil {
+			return fmt.Errorf("set analytics retention: %w", err)
+		}
+	case c.RetentionDays <= 0 && strings.Contains(current, " TTL "):
+		if err := c.Exec(ctx, `ALTER TABLE events REMOVE TTL`); err != nil {
+			return fmt.Errorf("remove analytics retention: %w", err)
+		}
+	}
+	if !strings.Contains(current, "ttl_only_drop_parts = 1") {
+		return c.Exec(ctx, `ALTER TABLE events MODIFY SETTING ttl_only_drop_parts = 1`)
+	}
 	return nil
 }
 

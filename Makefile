@@ -4,7 +4,7 @@
 # If not, `make devdb` runs the same Postgres as a plain process (no Docker
 # needed). Either way it listens on localhost:5432 as juju/juju.
 
-.PHONY: help db devdb devch dev test test-integration lint fmt fuzz docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test dashboard dashboard-dev dashboard-test
+.PHONY: help db devdb devch dev test test-integration lint fmt fuzz loadtest docs sdk sdk-test example-web example-web-build example-rn-deps flutter-test dashboard dashboard-dev dashboard-test
 
 help:
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -35,8 +35,12 @@ lint: ## gofmt + go vet (+ golangci-lint if installed)
 fmt: ## Format all Go code
 	cd server && gofmt -w .
 
-fuzz: ## Fuzz the event parser for 30s
+fuzz: ## Fuzz the event parser and the PII scrubber, 30s each
 	cd server && go test ./internal/event -run='^$$' -fuzz=FuzzNormalize -fuzztime=30s
+	cd server && go test ./internal/event -run='^$$' -fuzz=FuzzScrub -fuzztime=30s
+
+loadtest: ## k6 against a running server: make loadtest URL=... PROJECT=1 KEY=pk_... [RATE=500 BATCH=10]
+	k6 run -e URL=$(URL) -e PROJECT=$(PROJECT) -e KEY=$(KEY) -e RATE=$(or $(RATE),500) -e BATCH=$(or $(BATCH),10) loadtest/ingest.js
 
 docs: ## Rebuild the GitHub Pages files in docs/ from docs/_src/
 	./scripts/build-docs.sh

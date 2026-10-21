@@ -54,6 +54,7 @@ class JujuOptions {
     this.sessions = true,
     this.tracing = true,
     this.tracesSampleRate = 1,
+    this.sampleRate = 1,
   });
 
   final String dsn;
@@ -92,6 +93,9 @@ class JujuOptions {
 
   /// Share of transactions to send, 0 to 1.
   final double tracesSampleRate;
+
+  /// Share of errors to send, 0 to 1. Sessions still count every error.
+  final double sampleRate;
 }
 
 abstract final class Juju {
@@ -124,6 +128,7 @@ abstract final class Juju {
       log: debugPrint,
       random: Random.secure(),
       tracesSampleRate: options.tracesSampleRate,
+      sampleRate: options.sampleRate,
     ));
     _client = client;
     _tracing = options.tracing;

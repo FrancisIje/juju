@@ -66,16 +66,6 @@ func (s *Store) CreateProject(ctx context.Context, org, name string) (Project, e
 	return p, nil
 }
 
-// ProjectPublicKey returns the key that SDKs must send for project id.
-func (s *Store) ProjectPublicKey(ctx context.Context, id int64) (string, error) {
-	var key string
-	err := s.pool.QueryRow(ctx, `SELECT public_key FROM projects WHERE id = $1`, id).Scan(&key)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	return key, err
-}
-
 // ProjectSecretHash returns the SHA-256 of the project's secret key.
 func (s *Store) ProjectSecretHash(ctx context.Context, id int64) ([]byte, error) {
 	var hash []byte

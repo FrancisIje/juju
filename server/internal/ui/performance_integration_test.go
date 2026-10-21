@@ -18,7 +18,6 @@ import (
 	"juju/internal/alert"
 	"juju/internal/auth"
 	"juju/internal/config"
-	"juju/internal/queue"
 	"juju/internal/server"
 	"juju/internal/store"
 	"juju/internal/worker"
@@ -31,9 +30,9 @@ func TestReleaseHealthAndPerformanceEndToEnd(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st := store.New(pool)
 	ctx := context.Background()
-	q := queue.NewChan(100)
-	go worker.Run(ctx, q.Events(), worker.Deps{Store: st, Log: log}, 1)
-	t.Cleanup(q.Close)
+	q := newQueue(t)
+	go worker.Run(ctx, q, worker.Deps{Store: st, Log: log}, 1)
+	t.Cleanup(q.StopDeliveries)
 	srv := httptest.NewServer(server.Routes(server.Deps{Pool: pool, Store: st, Queue: q, MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: &alert.Notifier{Settings: st, Log: log}, Config: config.Config{PublicURL: "http://juju.test"}, Log: log}))
 	defer srv.Close()
 

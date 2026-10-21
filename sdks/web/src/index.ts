@@ -30,6 +30,8 @@ export interface WebOptions {
   tracing?: boolean;
   /** Share of page loads and navigations to send, 0 to 1. Default 1. */
   tracesSampleRate?: number;
+  /** Share of errors to send, 0 to 1 (default 1). Sessions still count every error. */
+  sampleRate?: number;
   /** Log what the SDK is doing to the console. */
   debug?: boolean;
   /** Replace how events are sent (used by tests). */
@@ -72,6 +74,7 @@ export function init(options: WebOptions): void {
   if (options.debug) clientOptions.debug = options.debug;
   if (options.flushIntervalMs) clientOptions.flushIntervalMs = options.flushIntervalMs;
   if (options.tracesSampleRate !== undefined) clientOptions.tracesSampleRate = options.tracesSampleRate;
+  if (options.sampleRate !== undefined) clientOptions.sampleRate = options.sampleRate;
   const c = new Client({ ...clientOptions, transport: options.transport ?? fetchTransport(parseDsn(options.dsn), nativeFetch) });
   client = c;
 

@@ -17,8 +17,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"juju/internal/auth"
 	"juju/internal/config"
@@ -31,6 +33,7 @@ const usage = `usage:
   juju serve [-migrate=true]
   juju migrate up|down|status
   juju project create -org NAME -name NAME
+  juju project limits -id ID [-rate N|default] [-quota N|none]
   juju upload -kind sourcemap|dart_symbols [-release R] PATH...
   juju user create -email EMAIL -org NAME [-name NAME]`
 
@@ -70,10 +73,16 @@ func run(args []string) error {
 		}
 		return migrate(ctx, cfg, args[1])
 	case "project":
-		if len(args) < 2 || args[1] != "create" {
+		if len(args) < 2 {
 			return errors.New(usage)
 		}
-		return createProject(ctx, cfg, args[2:])
+		switch args[1] {
+		case "create":
+			return createProject(ctx, cfg, args[2:])
+		case "limits":
+			return projectLimits(ctx, cfg, args[2:])
+		}
+		return errors.New(usage)
 	case "user":
 		if len(args) < 2 || args[1] != "create" {
 			return errors.New(usage)
@@ -143,6 +152,85 @@ func createProject(ctx context.Context, cfg config.Config, args []string) error 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(p)
+}
+
+// projectLimits shows or changes a project's rate limit and monthly quota.
+// A flag left out keeps its current value; with no flags it just shows them.
+func projectLimits(ctx context.Context, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("project limits", flag.ContinueOnError)
+	id := fs.Int64("id", 0, "project id")
+	rate := fs.String("rate", "", `events per second, 0 for unlimited, or "default" for JUJU_RATE_LIMIT`)
+	quota := fs.String("quota", "", `events per calendar month (UTC), or "none"`)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id <= 0 {
+		return errors.New("-id is required")
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "up"); err != nil {
+		return err
+	}
+	st := store.New(pool)
+	p, err := st.ProjectIngest(ctx, *id)
+	if err != nil {
+		return fmt.Errorf("project %d: %w", *id, err)
+	}
+	r, q := p.RateLimit, p.MonthlyQuota
+	if set["rate"] {
+		if r, err = parseLimit[int](*rate, "default"); err != nil {
+			return fmt.Errorf("-rate: %w", err)
+		}
+	}
+	if set["quota"] {
+		if q, err = parseLimit[int64](*quota, "none"); err != nil {
+			return fmt.Errorf("-quota: %w", err)
+		}
+	}
+	if set["rate"] || set["quota"] {
+		if err := st.SetProjectLimits(ctx, *id, r, q); err != nil {
+			return err
+		}
+	}
+	used, err := st.MonthUsage(ctx, *id, store.MonthStart(time.Now()))
+	if err != nil {
+		return err
+	}
+	rateText := fmt.Sprintf("default (JUJU_RATE_LIMIT=%d)", cfg.RateLimit)
+	if r != nil {
+		rateText = strconv.Itoa(*r) + " events/s"
+		if *r == 0 {
+			rateText = "unlimited"
+		}
+	}
+	quotaText := "none"
+	if q != nil {
+		quotaText = strconv.FormatInt(*q, 10) + " events/month"
+	}
+	fmt.Printf("project %d\n  rate limit: %s\n  quota:      %s\n  used this month: %d\n", *id, rateText, quotaText, used)
+	fmt.Println("Running servers pick up changes within 30 seconds.")
+	return nil
+}
+
+// parseLimit reads a non-negative number, or the word that means "not set"
+// (nil).
+func parseLimit[T int | int64](s, unset string) (*T, error) {
+	if s == unset {
+		return nil, nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return nil, fmt.Errorf("%q is not a number >= 0 or %q", s, unset)
+	}
+	v := T(n)
+	return &v, nil
 }
 
 // createUser adds a dashboard account from the command line: how you add

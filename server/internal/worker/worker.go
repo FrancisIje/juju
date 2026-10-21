@@ -10,6 +10,7 @@ import (
 
 	"juju/internal/event"
 	"juju/internal/fingerprint"
+	"juju/internal/queue"
 	"juju/internal/store"
 )
 
@@ -49,14 +50,24 @@ type Symbolicator interface {
 	Symbolicate(ctx context.Context, e *event.Event)
 }
 
-const (
-	attempts  = 3
-	baseDelay = 100 * time.Millisecond
-)
+// MaxAttempts is how often a failing event is tried before it's set aside
+// as a dead letter. With the delays below that's about 45 minutes, enough
+// to ride out a database restart or a short outage.
+const MaxAttempts = 50
 
-// Run starts n workers reading from events and blocks until the channel is
-// closed and every buffered event has been processed. Draining before
-// returning is what makes a clean shutdown (Ctrl-C, deploy) lose nothing.
+// retryDelay grows with each attempt: 1s, 5s, 30s, then every minute.
+func retryDelay(attempt int) time.Duration {
+	switch attempt {
+	case 1:
+		return time.Second
+	case 2:
+		return 5 * time.Second
+	case 3:
+		return 30 * time.Second
+	}
+	return time.Minute
+}
+
 // Deps is what a worker needs. Symbolicator and Alerter are optional.
 type Deps struct {
 	Store        Store
@@ -67,26 +78,53 @@ type Deps struct {
 	Log          *slog.Logger
 }
 
-func Run(ctx context.Context, events <-chan *event.Event, d Deps, n int) {
+// Run starts n workers taking deliveries from src, and returns when src
+// closes and every worker has finished the event in its hands. Each event
+// is acknowledged only after it's stored: if the process dies first, the
+// queue delivers it again, so nothing that got a 202 is ever lost.
+func Run(ctx context.Context, src queue.Source, d Deps, n int) {
 	var wg sync.WaitGroup
+	deliveries := src.Deliveries()
 	for range n {
 		wg.Go(func() {
-			for e := range events {
-				process(ctx, e, d)
+			for dl := range deliveries {
+				handle(ctx, dl, d)
 			}
 		})
 	}
 	wg.Wait()
 }
 
-func process(ctx context.Context, e *event.Event, d Deps) {
+func handle(ctx context.Context, dl queue.Delivery, d Deps) {
+	e := dl.Event()
+	err := process(ctx, e, d)
+	if err == nil {
+		dl.Ack()
+		return
+	}
+	log := d.Log.With("project_id", e.ProjectID, "event_id", e.EventID, "attempt", dl.Attempt())
+	if dl.Attempt() >= MaxAttempts {
+		log.Error("giving up on event; kept as a dead letter", "err", err)
+		dl.Dead(err.Error())
+		return
+	}
+	delay := retryDelay(dl.Attempt())
+	log.Warn("could not store event, will retry", "err", err, "retry_in", delay)
+	dl.Retry(delay)
+}
+
+// process stores one event. An error means "try again later": the queue
+// keeps the event and delivers it again.
+func process(ctx context.Context, e *event.Event, d Deps) (err error) {
 	log := d.Log.With("project_id", e.ProjectID, "event_id", e.EventID)
 
-	// One malformed event must not kill the worker goroutine, or the queue
-	// would stop draining. recover only works inside a deferred function.
+	// One malformed event must not kill the worker goroutine. A panic is
+	// treated like any other failure: retried, and set aside if it keeps
+	// happening. recover only works inside a deferred function.
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("panic while processing event", "panic", fmt.Sprint(r))
+			err = fmt.Errorf("panic: %v", r)
 		}
 	}()
 
@@ -99,14 +137,16 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 		} else {
 			log.Debug("analytics is off (no JUJU_CLICKHOUSE_URL), dropping event", "name", e.Name)
 		}
-		return
-	// Sessions and transactions have their own tables (see save below).
+		return nil
+	// Sessions and transactions have their own tables. They need no alerts
+	// or live refresh: the pages that show them reload on a timer, and an
+	// update per app launch would make every open issue list refetch.
 	case e.Type == event.TypeSession:
-		save(ctx, log, func() error { _, err := d.Store.SaveSession(ctx, e); return err })
-		return
+		_, err := d.Store.SaveSession(ctx, e)
+		return err
 	case e.Type == event.TypeTransaction:
-		save(ctx, log, func() error { _, err := d.Store.SaveTransaction(ctx, e); return err })
-		return
+		_, err := d.Store.SaveTransaction(ctx, e)
+		return err
 	}
 
 	// Symbolicate before fingerprinting, so issues group by real names and
@@ -118,45 +158,18 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 		}
 	}
 	fp := fingerprint.Compute(e)
-	var err error
-	for i := range attempts {
-		var res store.SaveResult
-		res, err = d.Store.SaveEvent(ctx, e, fp)
-		if err == nil {
-			log.Debug("event stored", "fingerprint", fp.Hash[:12], "duplicate", !res.Inserted, "new_issue", res.NewIssue, "regressed", res.Regressed)
-			if d.Alerter != nil && (res.NewIssue || res.Regressed) {
-				d.Alerter.IssueEvent(e, fp, res)
-			}
-			// A retried duplicate changed nothing, so nothing to refresh.
-			if d.Live != nil && res.Inserted {
-				d.Live.Changed(e.ProjectID)
-			}
-			return
-		}
-		if ctx.Err() != nil || i == attempts-1 {
-			break
-		}
-		time.Sleep(baseDelay << i) // 100ms, then 200ms: give a flaky DB time to recover
+	res, err := d.Store.SaveEvent(ctx, e, fp)
+	if err != nil {
+		return err
 	}
-	// The SDK already got 202 and deleted the event, so it is gone. A
-	// durable queue (Phase 9) fixes this by retrying from disk.
-	log.Error("dropping event after retries", "err", err)
-}
-
-// save runs one write with the same retries as an error event. Sessions and
-// transactions need no alerts or live refresh: the pages that show them
-// reload on a timer, and an update per app launch would make every open
-// issue list refetch for nothing.
-func save(ctx context.Context, log *slog.Logger, write func() error) {
-	var err error
-	for i := range attempts {
-		if err = write(); err == nil {
-			return
-		}
-		if ctx.Err() != nil || i == attempts-1 {
-			break
-		}
-		time.Sleep(baseDelay << i)
+	log.Debug("event stored", "fingerprint", fp.Hash[:12], "duplicate", !res.Inserted, "new_issue", res.NewIssue, "regressed", res.Regressed)
+	// A redelivered event the store already has (Inserted false) changed
+	// nothing: no second alert, nothing to refresh.
+	if d.Alerter != nil && (res.NewIssue || res.Regressed) {
+		d.Alerter.IssueEvent(e, fp, res)
 	}
-	log.Error("dropping event after retries", "err", err)
+	if d.Live != nil && res.Inserted {
+		d.Live.Changed(e.ProjectID)
+	}
+	return nil
 }

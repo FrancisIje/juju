@@ -14,10 +14,35 @@ import (
 )
 
 type Config struct {
-	Addr        string     // JUJU_ADDR, address the HTTP server listens on
-	DatabaseURL string     // JUJU_DATABASE_URL, Postgres connection string
-	QueueSize   int        // JUJU_QUEUE_SIZE, buffered channel capacity between ingest and workers
-	Workers     int        // JUJU_WORKERS, number of worker goroutines draining the queue
+	Addr        string // JUJU_ADDR, address the HTTP server listens on
+	DatabaseURL string // JUJU_DATABASE_URL, Postgres connection string
+	Workers     int    // JUJU_WORKERS, number of worker goroutines draining the queue
+	// JUJU_QUEUE_MAX_MB caps the durable queue on disk. Past it, ingest
+	// answers 429 and SDKs retry later. Default 1024.
+	QueueMaxMB int
+	// JUJU_NATS_URL: a shared NATS JetStream server for the queue. Empty
+	// runs one embedded in juju (stored under JUJU_DATA_DIR/queue), which
+	// is right for a single server. Needed when ingest and workers run as
+	// separate processes.
+	NATSURL string
+	// JUJU_RATE_LIMIT: events per second each project may send, for
+	// projects without their own limit (juju project limits). 0 turns the
+	// default off. Default 1000, with bursts of 5 seconds' worth.
+	RateLimit int
+	// JUJU_SCRUB_PII=false keeps emails, URL tokens and the like that
+	// apps send by accident (see event.Scrub). Scrubbing is on by default,
+	// so the field is named for turning it off: the zero value is safe.
+	KeepPII bool
+	// JUJU_RETENTION_DAYS: error events, app sessions and transactions
+	// older than this are deleted (issues stay). Default 90; 0 keeps them.
+	RetentionDays int
+	// JUJU_ANALYTICS_RETENTION_DAYS: the same for analytics events in
+	// ClickHouse. Default 365; 0 keeps them.
+	AnalyticsRetentionDays int
+	// JUJU_ROLES: which parts this process runs, comma-separated: ingest
+	// (POST /api/v1/.../events), worker (stores queued events), api (the
+	// dashboard and read API). Default all three.
+	Roles       Roles
 	LogLevel    slog.Level // JUJU_LOG_LEVEL, debug | info | warn | error
 	DataDir     string     // JUJU_DATA_DIR, where uploaded debug files are kept
 	MaxUploadMB int        // JUJU_MAX_UPLOAD_MB, largest debug file accepted
@@ -65,8 +90,28 @@ func Load() (Config, error) {
 		ClickHouseDatabase: getenv("JUJU_CLICKHOUSE_DATABASE", "juju"),
 	}
 	var err error
-	if c.QueueSize, err = getint("JUJU_QUEUE_SIZE", 10_000); err != nil {
+	if c.QueueMaxMB, err = getint("JUJU_QUEUE_MAX_MB", 1024); err != nil {
 		return c, err
+	}
+	c.NATSURL = getenv("JUJU_NATS_URL", "")
+	c.KeepPII = isOff(getenv("JUJU_SCRUB_PII", "true"))
+	if c.RateLimit, err = getint("JUJU_RATE_LIMIT", 1000); err != nil {
+		return c, err
+	}
+	if c.RetentionDays, err = getint("JUJU_RETENTION_DAYS", 90); err != nil {
+		return c, err
+	}
+	if c.AnalyticsRetentionDays, err = getint("JUJU_ANALYTICS_RETENTION_DAYS", 365); err != nil {
+		return c, err
+	}
+	if c.Roles, err = ParseRoles(getenv("JUJU_ROLES", "ingest,worker,api")); err != nil {
+		return c, err
+	}
+	// The embedded queue lives inside one process: ingest there and workers
+	// elsewhere would never meet. Refuse to start rather than queue events
+	// nobody will store.
+	if c.NATSURL == "" && c.Roles.Ingest != c.Roles.Worker {
+		return c, fmt.Errorf("JUJU_ROLES=%s runs ingest and workers in separate processes, so they need a shared queue: set JUJU_NATS_URL", c.Roles)
 	}
 	if c.Workers, err = getint("JUJU_WORKERS", 2); err != nil {
 		return c, err
@@ -78,8 +123,8 @@ func Load() (Config, error) {
 	if err := c.LogLevel.UnmarshalText([]byte(getenv("JUJU_LOG_LEVEL", "info"))); err != nil {
 		return c, fmt.Errorf("JUJU_LOG_LEVEL: %w", err)
 	}
-	if c.QueueSize < 1 || c.Workers < 1 {
-		return c, fmt.Errorf("JUJU_QUEUE_SIZE and JUJU_WORKERS must be at least 1")
+	if c.QueueMaxMB < 1 || c.Workers < 1 {
+		return c, fmt.Errorf("JUJU_QUEUE_MAX_MB and JUJU_WORKERS must be at least 1")
 	}
 	return c, nil
 }
@@ -111,4 +156,44 @@ func isOff(v string) bool {
 		return true
 	}
 	return false
+}
+
+// Roles is which parts of juju a process runs.
+type Roles struct{ Ingest, Worker, API bool }
+
+func ParseRoles(s string) (Roles, error) {
+	var r Roles
+	for _, part := range strings.Split(s, ",") {
+		switch strings.ToLower(strings.TrimSpace(part)) {
+		case "ingest":
+			r.Ingest = true
+		case "worker":
+			r.Worker = true
+		case "api":
+			r.API = true
+		case "all":
+			r = Roles{true, true, true}
+		case "":
+		default:
+			return r, fmt.Errorf("JUJU_ROLES: unknown role %q (use ingest, worker, api)", part)
+		}
+	}
+	if r == (Roles{}) {
+		return r, fmt.Errorf("JUJU_ROLES: choose at least one of ingest, worker, api")
+	}
+	return r, nil
+}
+
+func (r Roles) String() string {
+	var parts []string
+	if r.Ingest {
+		parts = append(parts, "ingest")
+	}
+	if r.Worker {
+		parts = append(parts, "worker")
+	}
+	if r.API {
+		parts = append(parts, "api")
+	}
+	return strings.Join(parts, ",")
 }

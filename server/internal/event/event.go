@@ -176,3 +176,20 @@ func ParseEnvelope(body []byte) (*Envelope, error) {
 	}
 	return &env, nil
 }
+
+// RestoreParsed sets the server's parsed fields (the json:"-" ones) again
+// from their text, after an event has been through JSON, as it is on the
+// queue between ingest and workers. Normalize wrote that text in canonical
+// form, so this gives back exactly the values it computed.
+//
+// A new parsed field must be restored here too; TestQueueRoundTrip fails
+// until it is.
+func (e *Event) RestoreParsed() {
+	e.Time, _ = time.Parse(time.RFC3339Nano, e.Timestamp)
+	if s := e.Session; s != nil {
+		s.StartedAt, _ = time.Parse(time.RFC3339Nano, s.Started)
+	}
+	if tx := e.Transaction; tx != nil {
+		tx.Start, _ = time.Parse(time.RFC3339Nano, tx.StartTimestamp)
+	}
+}

@@ -20,7 +20,6 @@ import (
 	"juju/internal/analytics"
 	"juju/internal/auth"
 	"juju/internal/config"
-	"juju/internal/queue"
 	"juju/internal/server"
 	"juju/internal/store"
 	"juju/internal/worker"
@@ -39,9 +38,9 @@ func TestAnalyticsEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = ch.Exec(context.Background(), "DROP DATABASE IF EXISTS "+ch.Database) })
 	writer := &analytics.Writer{Client: ch, Log: log, FlushEvery: 50 * time.Millisecond}
 	writer.Start()
-	q := queue.NewChan(1000)
-	go worker.Run(context.Background(), q.Events(), worker.Deps{Store: st, Analytics: writer, Log: log}, 2)
-	t.Cleanup(func() { q.Close(); writer.Stop() })
+	q := newQueue(t)
+	go worker.Run(context.Background(), q, worker.Deps{Store: st, Analytics: writer, Log: log}, 2)
+	t.Cleanup(func() { q.StopDeliveries(); writer.Stop() })
 
 	deps := server.Deps{Pool: pool, Store: st, Queue: q, MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: &alert.Notifier{Settings: st, Log: log}, Analytics: ch, Config: config.Config{PublicURL: "http://juju.test"}, Log: log}
 	srv := httptest.NewServer(server.Routes(deps))

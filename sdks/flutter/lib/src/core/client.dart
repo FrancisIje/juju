@@ -45,6 +45,7 @@ class ClientOptions {
     this.debug = false,
     this.log,
     this.tracesSampleRate = 1,
+    this.sampleRate = 1,
     Random? random,
   }) : random = random ?? Random();
 
@@ -79,6 +80,11 @@ class ClientOptions {
 
   /// Share of transactions to send, 0 to 1.
   final double tracesSampleRate;
+
+  /// Share of errors to send, 0 to 1. A dropped error still counts in its
+  /// session, so crash-free rates stay exact. Sessions and analytics events
+  /// are never sampled.
+  final double sampleRate;
   final Random random;
 }
 
@@ -175,6 +181,10 @@ class JujuClient implements TransactionHost {
         return '';
       }
       _sessionError(crashed: crashed, count: true);
+      if (options.sampleRate < 1 && options.random.nextDouble() >= options.sampleRate) {
+        _log('error dropped by sampleRate ${options.sampleRate}');
+        return '';
+      }
       JsonMap? event = _buildEvent(error, stack, tags, mechanism);
       if (options.beforeSend != null) event = options.beforeSend!(event);
       if (event == null) return '';
