@@ -211,7 +211,9 @@ func TestDashboardFlowEndToEnd(t *testing.T) {
 	// First-run setup needs a server with no accounts. Other tests in this
 	// package share the database and create accounts, and test order isn't
 	// something to rely on, so start from none.
-	if _, err := pool.Exec(context.Background(), "TRUNCATE users CASCADE"); err != nil {
+	// Organizations too, so the test can run again (-count=2) without
+	// finding its own "acme" from the last run.
+	if _, err := pool.Exec(context.Background(), "TRUNCATE users, organizations CASCADE"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,7 +334,12 @@ func TestDashboardFlowEndToEnd(t *testing.T) {
 			OK            bool
 		}
 	}
-	ada.do("GET", fmt.Sprintf("/api/ui/projects/%d/alerts", proj.ID), nil, false, &deliveries)
+	// A delivery is recorded after Slack answers, so the fake Slack can
+	// have the message a moment before the record exists: wait for it.
+	waitFor(t, "both deliveries to be recorded", func() bool {
+		ada.do("GET", fmt.Sprintf("/api/ui/projects/%d/alerts", proj.ID), nil, false, &deliveries)
+		return len(deliveries.Deliveries) == 2
+	})
 	if len(deliveries.Deliveries) != 2 || !deliveries.Deliveries[0].OK || deliveries.Deliveries[0].Kind != "regression" {
 		t.Errorf("deliveries = %+v", deliveries.Deliveries)
 	}

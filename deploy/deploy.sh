@@ -4,7 +4,7 @@
 #   deploy/deploy.sh setup   root@IP DOMAIN   once, on a fresh Ubuntu 24.04 server
 #   deploy/deploy.sh release root@IP          build and ship the current code
 #   deploy/deploy.sh demo    root@IP          build and ship the web example to demo.DOMAIN
-#   deploy/deploy.sh ci-key  root@IP          let GitHub Actions deploy the production branch
+#   deploy/deploy.sh ci-key  root@IP          let GitHub Actions deploy every merge to main
 #
 # No domain yet? Use IP.sslip.io (e.g. 203.0.113.7.sslip.io): it resolves to
 # that IP, so Caddy can still get a real HTTPS certificate.
@@ -59,7 +59,7 @@ ci-key)
 	gh secret set DEPLOY_SSH_KEY --env production < "$dir/key"
 	gh secret set DEPLOY_KNOWN_HOSTS --env production --body "$known"
 	gh secret set DEPLOY_HOST --env production --body "$host"
-	echo "==> done: pushing to the production branch now deploys"
+	echo "==> done: merging a pull request into main now deploys"
 	;;
 demo)
 	# The example page loads ../../sdks/web/dist/juju.min.js and

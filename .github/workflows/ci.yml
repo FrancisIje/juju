@@ -1,10 +1,10 @@
 name: CI
 
+# Pull requests run the checks here. Pushes to main don't trigger this file
+# directly: deploy.yml calls it (workflow_call) before deploying, so each
+# merge runs the checks once, and a failure stops the deploy.
 on:
-  push:
-    branches: [main]
   pull_request:
-  # deploy.yml runs these same checks before every deploy.
   workflow_call:
 
 jobs:
