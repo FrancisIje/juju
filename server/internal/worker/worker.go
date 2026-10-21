@@ -33,6 +33,12 @@ type Live interface {
 	Changed(projectID int64)
 }
 
+// Analytics takes product analytics events (event, identify). Optional:
+// nil means analytics is off and they're dropped. Must not block.
+type Analytics interface {
+	Add(e *event.Event)
+}
+
 // Symbolicator rewrites minified or obfuscated frames into source
 // locations. Optional: nil skips symbolication.
 type Symbolicator interface {
@@ -52,6 +58,7 @@ type Deps struct {
 	Store        Store
 	Symbolicator Symbolicator
 	Alerter      Alerter
+	Analytics    Analytics
 	Live         Live
 	Log          *slog.Logger
 }
@@ -78,6 +85,17 @@ func process(ctx context.Context, e *event.Event, d Deps) {
 			log.Error("panic while processing event", "panic", fmt.Sprint(r))
 		}
 	}()
+
+	// Analytics events aren't issues: no symbolication, no fingerprint, no
+	// alerts. They go to ClickHouse in batches.
+	if e.IsAnalytics() {
+		if d.Analytics != nil {
+			d.Analytics.Add(e)
+		} else {
+			log.Debug("analytics is off (no JUJU_CLICKHOUSE_URL), dropping event", "name", e.Name)
+		}
+		return
+	}
 
 	// Symbolicate before fingerprinting, so issues group by real names and
 	// files, which stay the same across builds, instead of minified ones.

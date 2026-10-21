@@ -30,6 +30,7 @@ Two rules for every change:
 | `sdks/flutter/**` | Flutter SDK (Dart) | `flutter test` (+ `fake_async`) |
 | `dashboard/**` | Dashboard UI | `vitest` + manual check in a browser |
 | `server/migrations/**` | Database schema | migrate up, then down, then up again |
+| `server/internal/analytics/**` | Product analytics (ClickHouse) | `go test -tags=integration` against a real ClickHouse (`internal/testch` starts one) |
 | `server/internal/symbolicate/**` | Source maps, Dart DWARF | `go test` against real fixtures in `testdata/` |
 
 - Write down the **behaviour** that changed in one sentence, for example: "Errors with the same normalized stack trace now group into one issue." You will test that sentence, not the lines of code.
@@ -157,6 +158,12 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 - Wait 30 s (the "not uploaded" answer is cached that long) and send again: status `symbolicated`, real file:line, `raw` holds the original frame, in_app correct (node_modules, Dart SDK and Flutter frames are not app code).
 - Grouping must survive a new build: change the code above the bug (lines shift, new minified names or build id), upload the new build's file, and check the error joins the **same** issue.
 
+### Analytics changes
+- Run ClickHouse with `make devch` (or `scripts/devch.sh <dir>`; a pinned, checksum-checked build) and start juju with `JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123`. The log must say `analytics on`.
+- Send events the way each SDK does: the web example's `#analytics-selftest`, and the Flutter and React Native examples' `analytics` scenario (control server on 8098, release builds on the emulator). Each sends a known set, so the numbers can be checked exactly.
+- Check the rows in ClickHouse itself (`curl 'http://127.0.0.1:8123/?query=SELECT ... FROM <db>.events FORMAT PrettyCompactMonoBlock'`), then the same numbers in the dashboard's Analytics page: a Platform breakdown must equal what the apps sent, and People must merge a device's anonymous and logged-in events into one.
+- Queries must work whatever timezone the ClickHouse server is in (the client sets `session_timezone=UTC`). Test on a machine that isn't on UTC, or trends silently shift a day.
+
 ### Dashboard changes
 - Run `make dashboard`, **rebuild the Go binary**, and confirm the served bundle is the new one: the `index-<hash>.js` name in `curl localhost:8080/` must match `dashboard/dist/assets/`. Otherwise you're testing the old UI.
 - Click through the changed flow with real ingested data (send events with the curl above or the e2e spec), not an empty database. Then check the empty, loading and error states on purpose (stop the server to see the error state).
@@ -180,10 +187,19 @@ For every fix, including small ones found while testing something else:
 2. **Find the real cause** before fixing. If a first guess doesn't explain what you saw, keep looking: a fix for the wrong cause can still make a test pass.
 3. **Fix, then rebuild what's being run** (`make dashboard`, then rebuild the Go binary, since it embeds the UI at compile time) and confirm the new build is the one being served, e.g. the `index-<hash>.js` name in `curl localhost:8080/`.
 4. **Run the same steps again** and record that the behaviour is now right. Keep the script: it usually becomes a test.
-5. **Check the test guards the fix**: put the bug back (a mutation) and confirm the test fails, then restore it.
+5. **Check the test guards the fix**: put the bug back (a mutation) and confirm the test fails, then restore it. First make sure the mutant **compiles** (`go vet`, `tsc --noEmit`, `flutter analyze`): a mutant that doesn't compile always "fails", which proves nothing. And when a mutant survives, ask whether the test reproduces the real situation (a retry is a separate request; a phone chart is 350px wide) before deciding the code is fine.
 If you can't reproduce a reported bug, say so and say what you tried; don't call it fixed. If it only happens somewhere you can't reach (the user's server, a device you don't have), say exactly that and how the user can confirm.
 
 If you cannot run something (no simulator, Docker not running), say exactly what wasn't verified and why. Never claim it works.
+
+### When another session works on the same repo
+Check `ListAgents` and `git status` first: another session may be on another branch in the same folder.
+- Work in your **own git worktree** (`git worktree add ../juju-<topic> <branch>`), never in a folder another session uses: one checkout shared by two sessions mixes their files and commits.
+- Use **your own ports** for anything you run (Postgres `go run ./cmd/devdb -port 5433`, juju `JUJU_ADDR=:8090`, fake Slack, ClickHouse `CH_HTTP_PORT`), and say which ones you use.
+- **Stop processes by port** (`kill $(lsof -t -iTCP:<port> -sTCP:LISTEN)`), never by name: `pkill -f devdb` also kills the other session's database.
+- Shared devices (the Android emulator, port 8098, `adb reverse`) are one at a time: ask before taking them.
+- Commit only your own changes; leave files another session touched (or a downloaded binary in its folder) out, and move your downloads out of shared folders.
+- Integration test ports are fixed per package; if one is busy, wait until it's free and rerun rather than calling the test broken.
 
 ## Step 5: Document key changes as an artifact
 

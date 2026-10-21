@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client, type ClientOptions } from "../src/client";
 import type { SendResult, Transport } from "../src/transport";
-import type { Envelope } from "../src/types";
+import type { Envelope, JujuEvent } from "../src/types";
 
 const DSN = "https://pk_abc@juju.example.com/1";
 
@@ -38,7 +38,7 @@ describe("batching", () => {
     expect(sent).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(sent).toHaveLength(1);
-    expect(sent[0]!.events.map((e) => e.exception.message)).toEqual(["a", "b", "c"]);
+    expect((sent[0]!.events as JujuEvent[]).map((e) => e.exception.message)).toEqual(["a", "b", "c"]);
     expect(c.pending()).toBe(0);
   });
 
@@ -163,7 +163,7 @@ describe("events", () => {
     c.captureException(new Error("boom"), { tags: { step: "checkout" } });
     await c.flush();
 
-    const e = sent[0]!.events[0]!;
+    const e = sent[0]!.events[0]! as JujuEvent;
     expect(e).toMatchObject({
       type: "error",
       platform: "javascript",

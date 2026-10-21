@@ -1,0 +1,9 @@
+<!-- Installed by setup.sh as /etc/clickhouse-server/config.d/juju.xml.
+     Defaults are made for big servers; on a small VPS ClickHouse shares
+     memory with Postgres and juju. It already listens on localhost only. -->
+<clickhouse>
+    <!-- At most half the RAM, so Postgres and juju keep the rest. -->
+    <max_server_memory_usage_to_ram_ratio>0.5</max_server_memory_usage_to_ram_ratio>
+    <!-- Cache sizes for a few GB of RAM, not a hundred. -->
+    <mark_cache_size>268435456</mark_cache_size>
+</clickhouse>

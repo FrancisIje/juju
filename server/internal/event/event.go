@@ -36,7 +36,8 @@ type SDK struct {
 	Version string `json:"version"`
 }
 
-// Event is a single error report. Fields below the blank line are set by the
+// Event is one thing an SDK reports: an error, or (Phase 7) an analytics
+// event or identify call. Fields below the first blank line are set by the
 // server and never trusted from the client.
 type Event struct {
 	EventID     string            `json:"event_id"`
@@ -50,6 +51,12 @@ type Event struct {
 	Context     map[string]any    `json:"context,omitempty"`
 	User        *User             `json:"user,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
+	// Analytics: "event" (name, distinct_id, properties) and "identify"
+	// (distinct_id is the known user, anon_id the id the device had before).
+	Name       string         `json:"name,omitempty"`
+	DistinctID string         `json:"distinct_id,omitempty"`
+	AnonID     string         `json:"anon_id,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
 
 	SDK           SDK            `json:"sdk"`
 	ReceivedAt    time.Time      `json:"received_at"`

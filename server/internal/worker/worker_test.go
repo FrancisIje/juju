@@ -169,3 +169,41 @@ func TestLiveRefreshOnlyForStoredEvents(t *testing.T) {
 		t.Fatalf("refreshes = %v, want [4 9]", l.projects)
 	}
 }
+
+type recordingAnalytics struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (a *recordingAnalytics) Add(e *event.Event) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.names = append(a.names, e.Name)
+}
+
+// Analytics events go to ClickHouse, never to issues: no fingerprint, no
+// alert, no row in Postgres. With analytics off they're dropped, still
+// without touching issues.
+func TestAnalyticsEventsSkipIssues(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		ch := make(chan *event.Event, 3)
+		ch <- &event.Event{EventID: "a", Type: event.TypeEvent, Name: "signed_up", DistinctID: "u"}
+		ch <- &event.Event{EventID: "b", Type: event.TypeIdentify, Name: "$identify", DistinctID: "u", AnonID: "x"}
+		ch <- &event.Event{EventID: "err", Type: event.TypeError, Exception: &event.Exception{Type: "E"}}
+		close(ch)
+		s := &fakeStore{}
+		alerts := &recordingAlerter{}
+		deps := Deps{Store: s, Alerter: alerts, Log: quiet}
+		rec := &recordingAnalytics{}
+		if on {
+			deps.Analytics = rec
+		}
+		Run(context.Background(), ch, deps, 1)
+		if strings.Join(s.saved, ",") != "err" {
+			t.Errorf("analytics on=%v: issues got %v, want only the error", on, s.saved)
+		}
+		if on && strings.Join(rec.names, ",") != "signed_up,$identify" {
+			t.Errorf("analytics got %v", rec.names)
+		}
+	}
+}

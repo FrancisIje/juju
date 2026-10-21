@@ -1,0 +1,267 @@
+<title>juju Product Analytics</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column; a viewer of the real Analytics screens opens the page, then how events flow, the decisions, using it, what was checked, and limits. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #6d28d9;
+  --accent-soft: #f1ebfd;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --warn: #a35300;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --shot-bg: #e3e7ec;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --warn: #fbbf24; --info: #7aa2ff;
+    --code-bg: #1d242d; --shot-bg: #0a0d11;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --warn: #fbbf24; --info: #7aa2ff;
+  --code-bg: #1d242d; --shot-bg: #0a0d11;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+kbd { font-family: var(--f-mono); font-size: 0.78em; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); white-space: nowrap; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section, .block { display: grid; gap: 16px; }
+section { gap: 22px; }
+.block { gap: 10px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-x: auto; white-space: nowrap; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+/* screen viewer */
+.viewer { display: grid; gap: 14px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; max-width: 100%; border: 1px solid var(--line); border-radius: 999px; overflow-x: auto; scrollbar-width: none; } /* scrolls sideways on a phone instead of wrapping into a lump */
+.seg button { white-space: nowrap; flex: none; }
+.seg button { font: inherit; font-size: 0.9rem; padding: 6px 14px; border: 0; background: var(--bg); color: var(--fg); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.shot { background: var(--shot-bg); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.shot img { display: block; width: 100%; height: auto; }
+.shot.phone { justify-self: center; width: min(100%, 300px); }
+
+.audiences { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.aud { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.aud ul { font-size: 0.93rem; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix .mono { font-family: var(--f-mono); font-size: 0.8rem; color: var(--accent); }
+.fix p { font-size: 0.93rem; }
+footer { color: var(--muted); font-size: 0.9rem; }
+@media (prefers-reduced-motion: no-preference) { .shot img { transition: opacity 0.15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Phase 7 · Product analytics</span>
+    <h1>Count what people do, from the same SDKs that catch their crashes</h1>
+    <p class="lede">Error tracking says what broke. Product analytics says what people do: how many started a checkout, how many finished it, and how many came back. Phase 7 adds <code>capture</code>, <code>identify</code> and <code>reset</code> to the web, React Native and Flutter SDKs, stores the events in ClickHouse, and adds trends, funnels and retention to the dashboard.</p>
+    <div class="logline">[phase 7] <b>DONE</b> verified="trend of checkout_started by platform = Web 3 · Flutter 3 · React Native 2, exactly what the example apps sent (Chrome, Flutter release on Android, React Native release on Android)"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The screens</span>
+    <h2>Real screenshots from the verification run</h2>
+    <div class="panel viewer">
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Screen">
+          <button type="button" id="s-trend" data-screen="trend" aria-pressed="true">Trend by platform</button>
+          <button type="button" id="s-funnel" data-screen="funnel" aria-pressed="false">Funnel</button>
+          <button type="button" id="s-retention" data-screen="retention" aria-pressed="false">Retention</button>
+        </div>
+        <div class="seg" role="group" aria-label="Theme">
+          <button type="button" id="t-dark" data-theme-pick="dark" aria-pressed="true">Dark</button>
+          <button type="button" id="t-light" data-theme-pick="light" aria-pressed="false">Light</button>
+        </div>
+      </div>
+      <p class="note" id="shot-caption">checkout_started from the three example apps, broken down by platform: Flutter 3, Web 3, React Native 2. Flutter's and Web's lines overlap because both are 3; the table lists each.</p>
+      <div class="shot"><img id="shot" src="img/analytics/trend-platform-dark.jpg" alt="The trend of checkout_started by platform, dark mode" width="1360" height="900"></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">How it works</span>
+    <h2>One SDK call to one chart</h2>
+    <pre class="mermaid">
+flowchart LR
+  A["capture('checkout_started')"] --> Q[SDK queue<br/>batched, retried, kept offline]
+  Q --> I[POST /api/v1/.../events<br/>same endpoint as errors]
+  I --> W[worker]
+  W -- "type: error" --> P[(Postgres<br/>issues)]
+  W -- "type: event / identify" --> B[writer<br/>batches every second]
+  B --> C[(ClickHouse<br/>events, person_aliases)]
+  C --> D[Analytics page<br/>trends · funnels · retention]
+</pre>
+    <p>Analytics events travel the same path as errors up to the worker: the same SDK queue (batching, retry with backoff, saved across app restarts), the same envelope and endpoint, the same key check. The worker sends them to a writer instead of the issue store. The writer inserts into ClickHouse in batches, at most once a second.</p>
+    <div class="why"><span class="label">Why ClickHouse, not Postgres</span>Analytics events outnumber errors by 100× or more, and the questions are always "count these over time, grouped by that". ClickHouse stores each column separately and compressed, so a trend reads only the timestamp, name and breakdown columns. Postgres reads whole rows. Postgres still keeps everything else: users, projects, issues.</div>
+    <div class="why"><span class="label">Why analytics is optional</span>Without <code>JUJU_CLICKHOUSE_URL</code>, juju works exactly as before and the Analytics page says how to turn it on. Nobody should need a second database to track crashes, and if ClickHouse goes down, errors keep flowing: the writer retries with backoff and holds up to 100,000 events.</div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Decisions</span>
+    <h2>What makes the numbers right</h2>
+    <div class="block">
+      <h3>One person before and after login</h3>
+      <p>Each device gets a random anonymous id (stored in localStorage, AsyncStorage, or a file). <code>identify("user_42")</code> after login sends one link, anonymous id → user, and later events carry the user id. Queries resolve every event through those links, so a person who browsed anonymously and then bought something counts once. In the run, the web example sent 3 checkouts, 2 before login and 1 after, and the dashboard showed <b>1 person</b>.</p>
+      <div class="why"><span class="label">The first link wins</span>If a shared device logs into a second account without <code>reset()</code>, the SDK doesn't link again, and the server ignores later links for the same anonymous id. So one person's history can't move to someone else. The first version stored links in a table type that keeps the <em>newest</em> row after a background merge, which would have silently flipped this to "last link wins". A test now merges the table and checks again.</div>
+    </div>
+    <div class="block">
+      <h3>A retried event counts once</h3>
+      <p>SDKs retry, so the same event can arrive twice. Counts use <code>uniqExact(event_id)</code> rather than <code>count()</code>, and the table merges duplicates over time. A test sends the same event in two separate inserts, like a real retry, and expects it counted once. (Copies in one insert are merged right away, which first made that test pass for the wrong reason.)</p>
+    </div>
+    <div class="block">
+      <h3>Days in UTC, on any server</h3>
+      <p>Charts group by hour, day or week in UTC. The first run returned an empty chart: ClickHouse converts dates in the <em>server's</em> timezone, and this machine is on UTC+1, so every day started at 23:00 the day before and matched nothing. Every query now runs with <code>session_timezone=UTC</code>. CI runs in UTC, so this would have passed there and broken on the first server in another timezone.</p>
+    </div>
+    <div class="block">
+      <h3>Errors come first</h3>
+      <p>The SDK queue keeps up to 1,000 analytics events but counts them separately from errors (100), so a burst of tracking can never push a crash report out. On the server, analytics never touches issues: an event can't become an issue even if it carries an exception.</p>
+    </div>
+    <div class="block">
+      <h3>Values go in as parameters</h3>
+      <p>Event names, property keys and dates are sent to ClickHouse as query parameters (<code>{event:String}</code>), never pasted into SQL. A test tries names like <code>x' OR 1=1 --</code> and <code>'; DROP TABLE events; --</code>. They match nothing, and the table is still there.</p>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Send events, then read them</h2>
+    <pre class="code"><span class="c">// web and React Native</span>
+juju.capture("checkout_started", { plan: "pro", items: 3 });
+juju.identify(user.id);   <span class="c">// after login</span>
+juju.reset();             <span class="c">// after logout</span>
+
+<span class="c">// Flutter</span>
+Juju.capture('checkout_started', {'plan': 'pro', 'items': 3});
+Juju.identify(user.id);
+Juju.reset();</pre>
+    <pre class="code"><span class="c"># run it locally: ClickHouse without Docker (a pinned, checksum-checked build)</span>
+make devch
+JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123 make dev
+
+<span class="c"># on a VPS, deploy/setup.sh installs the same ClickHouse version and turns analytics on</span></pre>
+    <p>The dashboard's <b>Analytics</b> page (<kbd>g</kbd> <kbd>a</kbd>) has three tabs. <b>Trends</b> counts an event or the people who did it, over 24 hours to 90 days, broken down by platform, OS, browser, release, environment or any property. <b>Funnels</b> shows how many people did steps in order within a time window. <b>Retention</b> shows how many came back on each following day. Every choice is in the URL, so a chart can be shared.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked</h2>
+    <p>Each example app sent a known set of events from a real build. The dashboard then had to show exactly those numbers.</p>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>App and build</th><th>Sent</th><th>Stored in ClickHouse</th></tr></thead>
+        <tbody>
+          <tr><td>Web, minified, Chrome on another origin</td><td class="mono">3 checkout_started (2 before login), identify, 1 completed</td><td class="mono">lib juju.web · os macOS · browser Chrome · 1 person</td></tr>
+          <tr><td>Flutter release, Android emulator</td><td class="mono">2 checkout_started, identify, 1 completed; then a tap after relaunch</td><td class="mono">os Android · the tap after relaunch still flutter_user_1</td></tr>
+          <tr><td>React Native release (Hermes), Android emulator</td><td class="mono">2 checkout_started, identify</td><td class="mono">os Android · anon then rn_user_1</td></tr>
+          <tr><td>Dashboard, checkout_started by platform</td><td colspan="2" class="mono">Flutter 3 · Web 3 · React Native 2 (38% · 38% · 25%), People: 1 each, by OS: Android 5 · macOS 3</td></tr>
+          <tr><td>Funnel started → completed</td><td colspan="2" class="mono">3 people → 2 people (67%), 1 dropped off</td></tr>
+          <tr><td>End-to-end test, fresh server</td><td colspan="2" class="mono">onboarding before the first event → exact breakdown → funnel; also runs in CI</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Tests: 7 Go integration tests against a real ClickHouse (trends, identify merging, funnel order and window, retention cohorts, injection, retries when ClickHouse fails, the whole API path); 9 + 3 JavaScript SDK tests; 8 Flutter tests; 8 dashboard tests. Mutation checks broke 14 rules on purpose and a test caught each one. Two first needed a better test (a retry as a separate insert, a chart at phone width), and one first "failed" only because the mutant didn't compile; it was redone so it did.</p>
+    <h3>What testing exposed</h3>
+    <div class="fixes">
+      <div class="fix"><span class="mono">empty charts off UTC</span><p>ClickHouse used the server's timezone for days. Every query now runs in UTC.</p></div>
+      <div class="fix"><span class="mono">analytics never set up</span><p>Creating the database named the database being created, which doesn't exist yet. It now runs in <code>default</code>.</p></div>
+      <div class="fix"><span class="mono">last login would win</span><p>A table type that keeps the newest row would have moved history after a merge. Links now keep the first.</p></div>
+      <div class="fix"><span class="mono">test servers left running</span><p>ClickHouse's watchdog forks the real server, so stopping one process left it running and the test run hung. Tests now stop the whole process group.</p></div>
+      <div class="fix"><span class="mono">axis labels overlapping</span><p>On a phone, the last two dates ran into each other. A label too close to the last one is now skipped.</p></div>
+      <div class="fix"><span class="mono">a checksum that couldn't match</span><p>The macOS binary unpacks itself on first run, so its checksum changes. The pinned checksum is now taken from the download.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>Not covered yet</h2>
+    <ul>
+      <li><strong>No person profiles.</strong> <code>identify</code> links ids but doesn't store traits like plan or email per person yet. Properties live on events.</li>
+      <li><strong>No filters.</strong> Trends break down by one property but can't filter ("only plan = pro") yet.</li>
+      <li><strong>Retention is daily</strong>, for people whose first starting event falls in the range, and counts a return on each later day. No weekly view yet.</li>
+      <li><strong>Funnels and retention use the time window you choose,</strong> not someone's full history before it.</li>
+      <li><strong>Limited timezone choice.</strong> Charts are always in UTC, and the page says so.</li>
+      <li><strong>Events aren't replayed.</strong> If ClickHouse is down longer than the writer can hold (100,000 events), the oldest are dropped and logged. A durable queue arrives in Phase 9.</li>
+      <li><strong>Untested on a real VPS.</strong> <code>deploy/setup.sh</code> installs ClickHouse 26.8.18.2 from its apt repository with a memory cap. The settings were checked against the real binary, but the install hasn't run on a real VPS yet.</li>
+    </ul>
+  </section>
+
+  <footer>Part of the juju project docs. See the <a href="https://francisije.github.io/juju/">roadmap</a>, the <a href="https://francisije.github.io/juju/dashboard.html">dashboard</a>, and the <a href="https://francisije.github.io/juju/web-sdk.html">web</a>, <a href="https://francisije.github.io/juju/react-native-sdk.html">React Native</a> and <a href="https://francisije.github.io/juju/flutter-sdk.html">Flutter</a> SDK pages.</footer>
+</div>
+
+<script>
+(function () {
+  // Screenshots from the run with all three example apps (Chrome, 1360 px wide).
+  var screens = {
+    trend: { file: "trend-platform", alt: "The trend of checkout_started by platform", caption: "checkout_started from the three example apps, broken down by platform: Flutter 3, Web 3, React Native 2. Flutter's and Web's lines overlap because both are 3; the table lists each." },
+    funnel: { file: "funnel", alt: "A two-step funnel", caption: "3 people started a checkout and 2 finished it within a day (the React Native scenario doesn't complete one)." },
+    retention: { file: "retention", alt: "A retention table", caption: "Retention needs days to pass: the 20 Oct cohort's later days show dots until they happen, rather than a misleading 0%." }
+  };
+  var state = { screen: "trend", theme: "dark" };
+  try {
+    var t = document.documentElement.getAttribute("data-theme");
+    state.theme = t === "light" || t === "dark" ? t : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch (e) {}
+  var img = document.getElementById("shot");
+  var caption = document.getElementById("shot-caption");
+  function render() {
+    var s = screens[state.screen];
+    img.src = "img/analytics/" + s.file + "-" + state.theme + ".jpg";
+    img.alt = s.alt + ", " + state.theme + " mode";
+    caption.textContent = s.caption;
+    document.querySelectorAll("[data-screen]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.screen === state.screen)); });
+    document.querySelectorAll("[data-theme-pick]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.themePick === state.theme)); });
+  }
+  document.querySelectorAll("[data-screen]").forEach(function (b) { b.addEventListener("click", function () { state.screen = b.dataset.screen; render(); }); });
+  document.querySelectorAll("[data-theme-pick]").forEach(function (b) { b.addEventListener("click", function () { state.theme = b.dataset.themePick; render(); }); });
+  render();
+})();
+</script>

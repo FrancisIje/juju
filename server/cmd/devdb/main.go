@@ -20,6 +20,8 @@ import (
 
 func main() {
 	dir := flag.String("dir", ".devdb", "where to keep the database files")
+	// Another port lets two checkouts (git worktrees) run side by side.
+	port := flag.Uint("port", 5432, "port to listen on")
 	flag.Parse()
 	dataDir, err := filepath.Abs(*dir)
 	if err != nil {
@@ -27,7 +29,7 @@ func main() {
 	}
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
 		Version(embeddedpostgres.V17).
-		Port(5432).
+		Port(uint32(*port)).
 		Username("juju").
 		Password("juju").
 		Database("juju").
@@ -37,7 +39,7 @@ func main() {
 	if err := pg.Start(); err != nil {
 		fail(err)
 	}
-	fmt.Println("postgres ready: postgres://juju:juju@localhost:5432/juju (Ctrl-C to stop)")
+	fmt.Printf("postgres ready: postgres://juju:juju@localhost:%d/juju (Ctrl-C to stop)\n", *port)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

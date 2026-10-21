@@ -111,7 +111,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <span class="eyebrow">Project plan · Go · started Oct 2026</span>
     <h1>juju roadmap</h1>
     <p class="lede">Error tracking (like Sentry) and product analytics (like PostHog) in one Go backend, with SDKs for Flutter, React Native and the web. This page sets the order to build it in and explains the reason behind each choice.</p>
-    <div class="logline">[2026-10-20T11:40:00Z] <b>INFO</b> phase=6 status=done msg="dashboard and Slack/email alerts in the server binary; resolve → regression → alert verified in Chrome; next: product analytics"</div>
+    <div class="logline">[2026-10-20T23:55:00Z] <b>INFO</b> phase=7 status=done msg="capture/identify/reset in all three SDKs, ClickHouse, trends · funnels · retention; checkout_started by platform matched what the example apps sent; next: performance and sessions"</div>
   </header>
 
   <section>
@@ -297,15 +297,16 @@ flowchart LR
         <div class="done"><span class="label">Done when</span>You fix a bug, resolve its issue, throw the error again, and get a regression alert in Slack. Verified end to end in Chrome against a local Slack stand-in; a real workspace is next.</div>
       </article>
 
-      <article class="phase next">
-        <div class="phase-head"><span class="phase-num">Phase 7</span><h3>Product analytics</h3><span class="pill next">Next</span></div>
+      <article class="phase done-phase">
+        <div class="phase-head"><span class="phase-num">Phase 7</span><h3>Product analytics</h3><span class="pill done">Done</span></div>
         <ul>
           <li><code>capture("checkout_started", props)</code>, <code>identify</code>, and merging anonymous users into known users</li>
           <li>Add ClickHouse for raw events. Postgres keeps the metadata</li>
           <li>Trends (count over time by property) first, then funnels and retention</li>
         </ul>
         <div class="whynow"><span class="label">Why now</span>Analytics events outnumber errors by 100× or more. This is the point where a columnar database pays for its extra setup.</div>
-        <div class="done"><span class="label">Done when</span>A trend chart of a custom event, broken down by platform, matches what the example apps sent.</div>
+        <p><a href="https://francisije.github.io/juju/analytics.html">See the analytics screens, how people are counted, and how it was verified →</a></p>
+        <div class="done"><span class="label">Done when</span>A trend chart of a custom event, broken down by platform, matches what the example apps sent. Verified: Web 3, Flutter 3, React Native 2, from release builds.</div>
       </article>
 
       <article class="phase">

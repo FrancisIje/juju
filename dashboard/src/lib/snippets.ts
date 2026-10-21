@@ -58,3 +58,41 @@ void main() => Juju.runZoned(() async {
     }
   }
 }
+
+/** How to send an analytics event, per platform, shown before the first one arrives. */
+export function captureSnippet(p: Platform, dsn: string): string {
+  switch (p) {
+    case "web":
+      return `import * as juju from "@juju/web";
+
+juju.capture("checkout_started", { plan: "pro", items: 3 });
+
+// After login and logout:
+juju.identify(user.id);
+juju.reset();`;
+    case "react-native":
+      return `import * as juju from "@juju/react-native";
+
+juju.capture("checkout_started", { plan: "pro", items: 3 });
+
+// After login and logout:
+juju.identify(user.id);
+juju.reset();`;
+    case "flutter":
+      return `import 'package:juju_flutter/juju_flutter.dart';
+
+Juju.capture('checkout_started', {'plan': 'pro', 'items': 3});
+
+// After login and logout:
+Juju.identify(user.id);
+Juju.reset();`;
+    case "curl": {
+      const m = /^(https?):\/\/([^@]+)@([^/]+)\/(\d+)/.exec(dsn);
+      const [, scheme, key, host, id] = m ?? [];
+      return `curl -X POST "${scheme}://${host}/api/v1/projects/${id}/events" \\
+  -H "Content-Type: application/json" -H "X-Juju-Key: ${key}" \\
+  -d '{"sdk":{"name":"curl"},"events":[{"event_id":"'$(uuidgen)'","type":"event",
+       "name":"checkout_started","distinct_id":"user_42","properties":{"plan":"pro"}}]}'`;
+    }
+  }
+}

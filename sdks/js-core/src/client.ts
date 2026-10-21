@@ -2,7 +2,7 @@ import { Breadcrumbs } from "./breadcrumbs";
 import { parseDsn, type Dsn } from "./dsn";
 import { defaultIsInApp, exceptionFromThrown, type InAppFn } from "./stacktrace";
 import { byteLength, fetchTransport, type SendResult, type Transport } from "./transport";
-import type { Breadcrumb, Envelope, JujuEvent, SdkInfo, User } from "./types";
+import type { AnalyticsEvent, Breadcrumb, Envelope, IdentifyEvent, JujuEvent, OutgoingEvent, SdkInfo, User } from "./types";
 import { uuid4 } from "./uuid";
 
 export interface ClientOptions {
@@ -23,8 +23,19 @@ export interface ClientOptions {
   flushIntervalMs?: number;
   /** Send immediately once this many events are waiting. Default 20. */
   maxBatchSize?: number;
-  /** Events kept while offline. New events past this are dropped. Default 100. */
+  /** Errors kept while offline. New ones past this are dropped. Default 100. */
   maxQueueSize?: number;
+  /**
+   * Analytics events kept while offline, counted separately from errors so
+   * a burst of tracking can never push a crash report out. Default 1000.
+   */
+  maxAnalyticsQueueSize?: number;
+  /**
+   * Where the anonymous id (and the user id after identify) is kept between
+   * launches, so one device stays one person. localStorage on the web,
+   * AsyncStorage on React Native. Without it the id lasts for this session.
+   */
+  identityStorage?: KeyValueStorage;
   maxBreadcrumbs?: number;
   debug?: boolean;
   logger?: Pick<Console, "warn">;
@@ -40,9 +51,18 @@ export interface ClientOptions {
 
 /** Somewhere to keep queued events between app launches. */
 export interface QueueStorage {
-  load(): Promise<JujuEvent[]>;
-  save(events: JujuEvent[]): Promise<void>;
+  load(): Promise<OutgoingEvent[]>;
+  save(events: OutgoingEvent[]): Promise<void>;
 }
+
+/** The shape localStorage and React Native's AsyncStorage both have. */
+export interface KeyValueStorage {
+  getItem(key: string): string | null | Promise<string | null>;
+  setItem(key: string, value: string): void | Promise<void>;
+}
+
+const ANON_KEY = "juju.anon_id";
+const DISTINCT_KEY = "juju.distinct_id";
 
 const BASE_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
@@ -54,7 +74,15 @@ export class Client {
   private readonly opts: Required<Pick<ClientOptions, "flushIntervalMs" | "maxBatchSize" | "maxQueueSize" | "random">> & ClientOptions;
   private readonly transport: Transport;
   private readonly isInApp: InAppFn;
-  private queue: JujuEvent[] = [];
+  private queue: OutgoingEvent[] = [];
+  // Identity: anonId is this device's random id; distinctId is who events
+  // are from (anonId until identify(), then the user id).
+  private anonId = "";
+  private distinctId = "";
+  // capture/identify/reset run in call order on this chain, after the stored
+  // ids have loaded: on React Native storage is asynchronous, and events
+  // captured in the first moments must use the stored id, not a new one.
+  private identityChain: Promise<void>;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private timerDueAt = 0;
   private inFlight: Promise<void> | undefined;
@@ -92,6 +120,73 @@ export class Client {
     // the crash report we're about to read back.
     this.ready = this.loadSaved();
     this.persistChain = this.ready;
+    this.identityChain = this.loadIdentity();
+  }
+
+  /**
+   * Records something a user did, for product analytics: capture("checkout_started",
+   * { plan: "pro" }). Property values are stored as text (numbers and true/false
+   * too), which is what breakdowns group by. Never throws.
+   */
+  capture(name: string, properties?: Record<string, unknown>): void {
+    try {
+      if (this.closed || typeof name !== "string" || !name.trim()) return;
+      // Stamped now, so the time is when it happened even if the id loads later.
+      const base = this.analyticsBase();
+      const props = properties && typeof properties === "object" ? { ...properties } : undefined;
+      this.afterIdentity(() => {
+        const event: AnalyticsEvent = { ...base, type: "event", name, distinct_id: this.distinctId };
+        if (props && Object.keys(props).length > 0) event.properties = props;
+        this.enqueue(event);
+      });
+    } catch (err) {
+      this.log("could not capture event", err);
+    }
+  }
+
+  /**
+   * Says who this device's user is, after they log in. Events from before
+   * (sent with the anonymous id) and after count as one person. Also sets
+   * the user on error reports, unless setUser already did.
+   */
+  identify(userId: string): void {
+    try {
+      if (this.closed || typeof userId !== "string" || !userId.trim()) return;
+      const base = this.analyticsBase();
+      if (!this.user) this.user = { id: userId };
+      this.afterIdentity(() => {
+        if (userId === this.distinctId) return; // already identified as this user
+        const event: IdentifyEvent = { ...base, type: "identify", distinct_id: userId };
+        // Link the anonymous history only while still anonymous. Someone
+        // switching accounts on a shared device starts fresh, instead of
+        // merging two people.
+        if (this.distinctId === this.anonId) event.anon_id = this.anonId;
+        this.distinctId = userId;
+        void this.saveIdentity();
+        this.enqueue(event);
+      });
+    } catch (err) {
+      this.log("could not identify", err);
+    }
+  }
+
+  /**
+   * Forgets the user, after they log out: a new anonymous id, so whoever
+   * uses the device next isn't counted as them.
+   */
+  reset(): void {
+    this.user = undefined;
+    this.afterIdentity(() => {
+      this.anonId = uuid4();
+      this.distinctId = this.anonId;
+      void this.saveIdentity();
+    });
+  }
+
+  /** Who events are currently sent as. Resolves once the stored id has loaded. */
+  async getDistinctId(): Promise<string> {
+    await this.identityChain;
+    return this.distinctId;
   }
 
   /**
@@ -164,7 +259,7 @@ export class Client {
    */
   drain(send: (envelope: Envelope, body: string) => boolean, maxBytes: number): void {
     while (this.queue.length > 0) {
-      const batch: JujuEvent[] = [];
+      const batch: OutgoingEvent[] = [];
       let body = "";
       for (const e of this.queue) {
         const next = JSON.stringify(this.envelope([...batch, e]));
@@ -209,12 +304,61 @@ export class Client {
     return event;
   }
 
-  private enqueue(event: JujuEvent): boolean {
-    if (this.queue.length >= this.opts.maxQueueSize) {
+  private analyticsBase() {
+    const base: { event_id: string; timestamp: string; platform: string; release?: string; environment?: string; context?: Record<string, unknown> } = {
+      event_id: uuid4(),
+      timestamp: new Date().toISOString(),
+      platform: this.opts.platform ?? "javascript",
+    };
+    if (this.opts.release) base.release = this.opts.release;
+    if (this.opts.environment) base.environment = this.opts.environment;
+    // The device context lets breakdowns by OS and browser work.
+    const context = this.opts.context?.();
+    if (context) base.context = context;
+    return base;
+  }
+
+  private afterIdentity(fn: () => void): void {
+    this.identityChain = this.identityChain.then(fn).catch((err) => this.log("analytics", err));
+  }
+
+  private async loadIdentity(): Promise<void> {
+    const store = this.opts.identityStorage;
+    let anon: string | null = null;
+    let distinct: string | null = null;
+    if (store) {
+      try {
+        anon = await store.getItem(ANON_KEY);
+        distinct = await store.getItem(DISTINCT_KEY);
+      } catch (err) {
+        this.log("could not read the stored id", err);
+      }
+    }
+    this.anonId = anon || uuid4();
+    this.distinctId = distinct || this.anonId;
+    if (!anon) await this.saveIdentity();
+  }
+
+  private async saveIdentity(): Promise<void> {
+    const store = this.opts.identityStorage;
+    if (!store) return;
+    try {
+      await store.setItem(ANON_KEY, this.anonId);
+      await store.setItem(DISTINCT_KEY, this.distinctId);
+    } catch (err) {
+      this.log("could not store the id", err); // the id lasts for this session, which is still useful
+    }
+  }
+
+  private enqueue(event: OutgoingEvent): boolean {
+    const analytics = event.type !== "error";
+    const sameKind = this.queue.reduce((n, e) => n + ((e.type !== "error") === analytics ? 1 : 0), 0);
+    const limit = analytics ? (this.opts.maxAnalyticsQueueSize ?? 1000) : this.opts.maxQueueSize;
+    if (sameKind >= limit) {
       // Drop the newest, not the oldest: when the queue overflows it's
       // usually a loop repeating the same error, and the first ones are
       // the most likely to show the cause.
-      this.log(`queue full (${this.opts.maxQueueSize}), dropping event`);
+      this.log(`queue full (${limit} ${analytics ? "analytics events" : "errors"}), dropping event`);
       return false;
     }
     this.queue.push(event);
@@ -280,7 +424,7 @@ export class Client {
 
   // Remove by identity, not by position: a beacon may have taken events from
   // the front of the queue while this batch was in flight.
-  private remove(batch: JujuEvent[]): void {
+  private remove(batch: OutgoingEvent[]): void {
     const sent = new Set(batch);
     this.queue = this.queue.filter((e) => !sent.has(e));
     void this.persist();
@@ -325,7 +469,7 @@ export class Client {
     // after launch and saved). event_id tells them apart.
     const known = new Set(this.queue.map((e) => e.event_id));
     const restored = saved.filter(
-      (e): e is JujuEvent => typeof e === "object" && e !== null && typeof (e as JujuEvent).event_id === "string" && !known.has((e as JujuEvent).event_id),
+      (e): e is OutgoingEvent => typeof e === "object" && e !== null && typeof (e as OutgoingEvent).event_id === "string" && !known.has((e as OutgoingEvent).event_id),
     );
     if (restored.length === 0) return;
     // Older events first, and never more than the queue allows.
@@ -334,7 +478,7 @@ export class Client {
     this.schedule(0);
   }
 
-  private envelope(events: JujuEvent[]): Envelope {
+  private envelope(events: OutgoingEvent[]): Envelope {
     return { sdk: this.opts.sdk ?? { name: "juju.core", version: VERSION }, events };
   }
 

@@ -1,4 +1,5 @@
-// juju Flutter example: each button causes a different kind of error.
+// juju Flutter example: each button causes a different kind of error, or
+// sends a product analytics event.
 //
 // For automated checks, the app asks a small control server on the
 // development machine (port 8098) for its DSN and a scenario to run at
@@ -71,6 +72,11 @@ final scenarios = <String, void Function(BuildContext)>{
       Juju.captureException(e, s, {'step': 'parse-config'});
     }
   },
+  // Product analytics: events, not errors.
+  'checkout': (_) => Juju.capture('checkout_started', {'plan': 'pro', 'items': 3}),
+  'completed': (_) => Juju.capture('checkout_completed', {'plan': 'pro'}),
+  'login': (_) => Juju.identify('flutter_user_1'),
+  'logout': (_) => Juju.reset(),
   'breadcrumbs': (_) {
     print('coupon request is about to fail'); // ignore: avoid_print
     api.get(Uri.parse('http://localhost:8098/api/coupon?token=never-recorded')).ignore();
@@ -122,6 +128,16 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     add('juju initialised (scenario: ${widget.scenario})');
+    if (widget.scenario == 'analytics') {
+      // A known set, to check a chart against: 2 checkout_started (one
+      // before login, one after), an identify, 1 checkout_completed.
+      for (final name in ['checkout', 'login', 'checkout', 'completed']) {
+        scenarios[name]!(context);
+      }
+      await Juju.flush();
+      add('analytics scenario sent');
+      return;
+    }
     if (widget.scenario != 'all') return;
     scenarios['breadcrumbs']!(context);
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -147,6 +163,10 @@ class _HomePageState extends State<HomePage> {
             'zone': 'Zone error (timer)',
             'captured': 'Handled error (captureException)',
             'breadcrumbs': 'Breadcrumbs (print + http)',
+            'checkout': 'Start checkout (capture)',
+            'completed': 'Complete checkout (capture)',
+            'login': 'Log in as flutter_user_1 (identify)',
+            'logout': 'Log out (reset)',
           }.entries)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),

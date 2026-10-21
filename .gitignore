@@ -1,5 +1,7 @@
 # local Postgres from `make devdb`
 .devdb/
+# local ClickHouse from `make devch`
+.devch/
 # built binaries
 /server/juju
 /server/devdb

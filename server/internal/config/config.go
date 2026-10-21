@@ -35,6 +35,12 @@ type Config struct {
 	SMTPUser          string // JUJU_SMTP_USER
 	SMTPPassword      string // JUJU_SMTP_PASSWORD
 	SMTPFrom          string // JUJU_SMTP_FROM
+	// JUJU_CLICKHOUSE_URL (e.g. http://127.0.0.1:8123) turns on product
+	// analytics. Empty: error tracking works as before, analytics is off.
+	ClickHouseURL      string
+	ClickHouseUser     string // JUJU_CLICKHOUSE_USER
+	ClickHousePassword string // JUJU_CLICKHOUSE_PASSWORD
+	ClickHouseDatabase string // JUJU_CLICKHOUSE_DATABASE, default juju
 }
 
 const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=disable"
@@ -43,16 +49,20 @@ const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=dis
 // `make devdb` / docker compose.
 func Load() (Config, error) {
 	c := Config{
-		Addr:              getenv("JUJU_ADDR", ":8080"),
-		DatabaseURL:       getenv("JUJU_DATABASE_URL", DefaultDatabaseURL),
-		DataDir:           getenv("JUJU_DATA_DIR", "data"),
-		PublicURL:         strings.TrimRight(getenv("JUJU_PUBLIC_URL", "http://localhost:8080"), "/"),
-		AllowSignup:       !isOff(getenv("JUJU_ALLOW_SIGNUP", "true")),
-		AllowHTTPWebhooks: getenv("JUJU_ALLOW_HTTP_WEBHOOKS", "") == "true",
-		SMTPAddr:          getenv("JUJU_SMTP_ADDR", ""),
-		SMTPUser:          getenv("JUJU_SMTP_USER", ""),
-		SMTPPassword:      getenv("JUJU_SMTP_PASSWORD", ""),
-		SMTPFrom:          getenv("JUJU_SMTP_FROM", "juju <alerts@localhost>"),
+		Addr:               getenv("JUJU_ADDR", ":8080"),
+		DatabaseURL:        getenv("JUJU_DATABASE_URL", DefaultDatabaseURL),
+		DataDir:            getenv("JUJU_DATA_DIR", "data"),
+		PublicURL:          strings.TrimRight(getenv("JUJU_PUBLIC_URL", "http://localhost:8080"), "/"),
+		AllowSignup:        !isOff(getenv("JUJU_ALLOW_SIGNUP", "true")),
+		AllowHTTPWebhooks:  getenv("JUJU_ALLOW_HTTP_WEBHOOKS", "") == "true",
+		SMTPAddr:           getenv("JUJU_SMTP_ADDR", ""),
+		SMTPUser:           getenv("JUJU_SMTP_USER", ""),
+		SMTPPassword:       getenv("JUJU_SMTP_PASSWORD", ""),
+		SMTPFrom:           getenv("JUJU_SMTP_FROM", "juju <alerts@localhost>"),
+		ClickHouseURL:      getenv("JUJU_CLICKHOUSE_URL", ""),
+		ClickHouseUser:     getenv("JUJU_CLICKHOUSE_USER", ""),
+		ClickHousePassword: getenv("JUJU_CLICKHOUSE_PASSWORD", ""),
+		ClickHouseDatabase: getenv("JUJU_CLICKHOUSE_DATABASE", "juju"),
 	}
 	var err error
 	if c.QueueSize, err = getint("JUJU_QUEUE_SIZE", 10_000); err != nil {
