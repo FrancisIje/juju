@@ -253,3 +253,46 @@ pre.code {
 .table th { font-size: var(--text-xs); color: var(--text-faint); font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
 .switch { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md); }
 .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-4); }
+
+/* Release health and performance (Phase 8). */
+.filters { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+.seg button { background: none; border: 0; color: var(--text-muted); font: inherit; font-size: var(--text-sm); padding: 5px 10px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line-strong); }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text-strong); }
+.seg button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.stat .value.hero { font: 600 var(--text-2xl) var(--font-sans); font-variant-numeric: normal; }
+.stat .sub { font-size: var(--text-xs); color: var(--text-muted); }
+.chart { margin: 0; display: grid; gap: var(--space-2); min-width: 0; }
+.chart .legend { display: flex; gap: var(--space-4); font-size: var(--text-xs); color: var(--text-muted); }
+.chart .legend span { display: inline-flex; gap: 6px; align-items: center; }
+.chart-plot { position: relative; min-width: 0; }
+.chart-plot svg { display: block; overflow: visible; }
+.chart-plot svg:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chart .axis { font: var(--text-xs) var(--font-mono); fill: var(--text-faint); font-variant-numeric: tabular-nums; }
+.chart .end-label { fill: var(--text-muted); }
+.chart-tip { position: absolute; top: 4px; width: 180px; pointer-events: none; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: var(--space-2) var(--space-3); font-size: var(--text-xs); display: grid; gap: 3px; box-shadow: var(--shadow); }
+.chart-tip .tip-row { display: flex; gap: 6px; align-items: center; }
+.chart-tip strong { color: var(--text-strong); font-family: var(--font-mono); font-weight: 500; }
+.chart-table summary { cursor: pointer; font-size: var(--text-xs); color: var(--text-muted); width: fit-content; }
+.meter { height: 4px; border-radius: 2px; background: var(--brand-soft); overflow: hidden; min-width: 48px; }
+.meter > span { display: block; height: 100%; background: var(--brand); border-radius: 2px; }
+.rate { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.waterfall { display: grid; font-size: var(--text-sm); }
+.wf-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--space-3); align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.wf-head { font-size: var(--text-xs); color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.wf-label { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.wf-desc { overflow-wrap: anywhere; min-width: 0; color: var(--text-muted); font-size: var(--text-xs); }
+.wf-track { position: relative; height: 18px; background: var(--bg-sunken); border-radius: var(--radius-sm); }
+.wf-bar { position: absolute; top: 4px; height: 10px; border-radius: 3px; background: var(--brand); }
+.wf-bar.bad { background: var(--red); }
+.wf-time { position: absolute; top: 1px; font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+.clickable { cursor: pointer; }
+.clickable:hover td { background: var(--surface-hover); }
+.table tr[aria-selected="true"] td { background: var(--brand-soft); }
+.table .num { text-align: right; white-space: nowrap; } /* "1.01 s" never splits from its unit */
+.nowrap { white-space: nowrap; } /* release names: "web@1.0.1" mustn't break mid-version */
+@media (max-width: 760px) {
+  .wf-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .table .hide-narrow { display: none; }
+}

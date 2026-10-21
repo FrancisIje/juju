@@ -15,14 +15,16 @@ export function installErrorHandlers(client: Client): () => void {
     // Error object: the browser hides details from other origins. Adding
     // crossorigin="anonymous" to the <script> tag (and CORS on the CDN)
     // reveals them.
-    client.captureException(e.error ?? e.message ?? "Unknown error");
+    // An error nothing caught counts as a crash of the session, even though
+    // the page keeps running: something the person was doing broke.
+    client.captureException(e.error ?? e.message ?? "Unknown error", { crashed: true });
   };
 
   // Promises that fail with no .catch(). window.onerror never sees these,
   // and they're often the most common errors in an async web app.
   const onRejection = (ev: Event) => {
     const reason = (ev as PromiseRejectionEvent).reason;
-    client.captureException(reason ?? "Unhandled promise rejection with no reason");
+    client.captureException(reason ?? "Unhandled promise rejection with no reason", { crashed: true });
   };
 
   window.addEventListener("error", onError);

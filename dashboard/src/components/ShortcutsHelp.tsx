@@ -1,6 +1,7 @@
 const groups: [string, [string, string][]][] = [
-  ["Anywhere", [["⌘ K", "Command palette: search issues, jump to pages"], ["?", "Show these shortcuts"], ["g  i", "Go to issues"], ["g  s", "Go to settings"]]],
+  ["Anywhere", [["⌘ K", "Command palette: search issues, jump to pages"], ["?", "Show these shortcuts"], ["g  i", "Go to issues"], ["g  r", "Go to releases"], ["g  p", "Go to performance"], ["g  s", "Go to settings"]]],
   ["Issue list", [["j / k", "Move down / up"], ["Enter or o", "Open the issue"], ["x", "Select for bulk actions"], ["r", "Resolve"], ["i", "Ignore"], ["u", "Mark unresolved"], ["/", "Search"]]],
+  ["Performance", [["j / k", "Move down / up"], ["Enter or o", "Open the transaction"], ["[ / ]", "Previous / next sample"], ["← → on a chart", "Read each point"], ["Esc", "Back to the list"]]],
   ["Issue page", [["r / i / u", "Resolve / ignore / mark unresolved"], ["[ / ]", "Newer / older event"], ["1 – 4", "Stack trace, breadcrumbs, context, raw JSON"], ["Esc", "Back to the list"]]],
 ];
 

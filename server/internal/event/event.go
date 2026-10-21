@@ -36,8 +36,17 @@ type SDK struct {
 	Version string `json:"version"`
 }
 
-// Event is a single error report. Fields below the blank line are set by the
-// server and never trusted from the client.
+// Event types. One envelope and one endpoint carry all of them, so the SDKs
+// reuse a single queue, retry and offline path for everything they send.
+const (
+	TypeError       = "error"       // an exception; grouped into issues
+	TypeSession     = "session"     // one update to an app session (see Session)
+	TypeTransaction = "transaction" // a timed operation with spans (see Transaction)
+)
+
+// Event is one item from an SDK: an error report, a session update or a
+// transaction, depending on Type. Fields below the blank line are set by
+// the server and never trusted from the client.
 type Event struct {
 	EventID     string            `json:"event_id"`
 	Type        string            `json:"type"`
@@ -45,7 +54,9 @@ type Event struct {
 	Platform    string            `json:"platform"`
 	Release     string            `json:"release,omitempty"`
 	Environment string            `json:"environment"`
-	Exception   *Exception        `json:"exception,omitempty"`
+	Exception   *Exception        `json:"exception,omitempty"`   // type "error" only
+	Session     *Session          `json:"session,omitempty"`     // type "session" only
+	Transaction *Transaction      `json:"transaction,omitempty"` // type "transaction" only
 	Breadcrumbs []Breadcrumb      `json:"breadcrumbs,omitempty"`
 	Context     map[string]any    `json:"context,omitempty"`
 	User        *User             `json:"user,omitempty"`

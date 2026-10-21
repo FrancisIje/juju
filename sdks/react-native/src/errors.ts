@@ -34,7 +34,9 @@ export function installGlobalHandler(
   const handler: GlobalHandler = (error, isFatal) => {
     const callPrevious = () => previous?.(error, isFatal);
     try {
-      client.captureException(error, { tags: { fatal: isFatal ? "true" : "false" } });
+      // A fatal error ends the app in a release build: that's a crash, and
+      // the session ends as crashed. Non-fatal ones only count as errors.
+      client.captureException(error, { tags: { fatal: isFatal ? "true" : "false" }, crashed: Boolean(isFatal) });
     } catch {
       // captureException doesn't throw, but the app's crash behaviour must survive even if it did
     }

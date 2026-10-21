@@ -1,14 +1,18 @@
-import type { Envelope, JujuEvent, SendResult, Transport } from "@juju/core";
+import type { Envelope, JujuEvent, OutgoingEvent, SendResult, SessionEvent, TransactionEvent, Transport } from "@juju/core";
 import { Client } from "@juju/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deviceContext, isInApp } from "../src/context";
 import { installGlobalHandler, installRejectionTracking, type ErrorUtilsLike, type GlobalHandler } from "../src/errors";
 import * as juju from "../src/index";
 import { trackNavigation } from "../src/lifecycle";
+import { APP_START_DEADLINE_MS, startAppStart } from "../src/performance";
 import { asyncStorageQueue, STORAGE_KEY, type AsyncStorageLike } from "../src/storage";
 import { emitAppState, Platform } from "./react-native-fake";
 
 const DSN = "https://pk_abc@juju.example.com/1";
+
+/** The error events among events of every type (sessions share the queue). */
+const errors = (events: OutgoingEvent[]): JujuEvent[] => events.filter((e): e is JujuEvent => e.type === "error");
 
 /** React Native's ErrorUtils, with a "default handler" that records calls the way RN would crash. */
 function fakeErrorUtils() {
@@ -147,7 +151,7 @@ describe("init", () => {
     juju.init({ dsn: DSN, transport, storage });
     await juju.ready();
     await juju.flush();
-    expect(sent.flatMap((env) => env.events.map((e) => e.event_id))).toEqual(["33333333-3333-4333-8333-333333333333"]);
+    expect(errors(sent.flatMap((env) => env.events)).map((e) => e.event_id)).toEqual(["33333333-3333-4333-8333-333333333333"]);
   });
 
   it("warns when no storage is passed, because crashes could be lost", () => {
@@ -161,7 +165,7 @@ describe("init", () => {
     juju.captureException(new Error("x"));
     await juju.flush();
     expect(sent[0]!.sdk.name).toBe("juju.react-native");
-    expect(sent[0]!.events[0]).toMatchObject({ release: "shop@1.4.0+12", environment: "production", context: { os: { name: "ios" } } });
+    expect(errors(sent[0]!.events)[0]).toMatchObject({ release: "shop@1.4.0+12", environment: "production", context: { os: { name: "ios" } } });
   });
 
   it("saves and sends when the app goes to the background, and records it", async () => {
@@ -170,10 +174,10 @@ describe("init", () => {
     juju.captureException(new Error("before backgrounding"));
     emitAppState("background");
     await new Promise((r) => setTimeout(r, 10));
-    expect(JSON.parse(data.get(STORAGE_KEY)!)[0].exception.message).toBe("before backgrounding");
+    expect(errors(JSON.parse(data.get(STORAGE_KEY)!))[0]!.exception.message).toBe("before backgrounding");
     juju.captureException(new Error("after"));
     await new Promise((r) => setTimeout(r, 10));
-    const events = JSON.parse(data.get(STORAGE_KEY)!) as JujuEvent[];
+    const events = errors(JSON.parse(data.get(STORAGE_KEY)!));
     expect(events[1]!.breadcrumbs).toContainEqual(expect.objectContaining({ type: "app", message: "active → background" }));
     emitAppState("active");
   });
@@ -233,5 +237,144 @@ describe("isInApp", () => {
     ["http://localhost:8081/node_modules/react-native/Libraries/x.js", false],
   ])("%s → %s", (file, want) => {
     expect(isInApp(file)).toBe(want);
+  });
+});
+
+describe("sessions", () => {
+  const sessionsIn = (events: OutgoingEvent[]) => events.filter((e): e is SessionEvent => e.type === "session");
+
+  // The roadmap's "done when": a forced crash must lower the crash-free
+  // rate. On a real phone the app dies right after, so the crashed update
+  // has to be on disk before React Native's handler runs.
+  it("a fatal crash saves the session as crashed before the app dies", async () => {
+    vi.useFakeTimers();
+    const { storage, data } = fakeAsyncStorage();
+    const { utils, defaultHandler, crash } = fakeErrorUtils();
+    (globalThis as { ErrorUtils?: ErrorUtilsLike }).ErrorUtils = utils;
+    juju.init({ dsn: DSN, transport: { send: () => new Promise(() => {}) }, storage }); // offline
+    await juju.ready();
+    crash(new TypeError("fatal"));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(defaultHandler).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(data.get(STORAGE_KEY)!) as OutgoingEvent[];
+    expect(sessionsIn(saved)).toEqual([expect.objectContaining({ session: expect.objectContaining({ status: "crashed", errors: 1 }) })]);
+    expect(errors(saved)).toHaveLength(1);
+    delete (globalThis as { ErrorUtils?: ErrorUtilsLike }).ErrorUtils;
+  });
+
+  it("a non-fatal error is counted but doesn't crash the session", async () => {
+    const { utils, crash } = fakeErrorUtils();
+    (globalThis as { ErrorUtils?: ErrorUtilsLike }).ErrorUtils = utils;
+    juju.init({ dsn: DSN, transport, storage: fakeAsyncStorage().storage });
+    crash(new Error("non-fatal"), false);
+    await juju.flush();
+    expect(sessionsIn(sent.flatMap((e) => e.events))[0]?.session).toMatchObject({ status: "ok", errors: 1 });
+    delete (globalThis as { ErrorUtils?: ErrorUtilsLike }).ErrorUtils;
+  });
+
+  it("follows the app into the background and back", async () => {
+    juju.init({ dsn: DSN, transport, storage: fakeAsyncStorage().storage });
+    await juju.flush();
+    emitAppState("background");
+    await juju.flush();
+    emitAppState("active");
+    await juju.flush();
+    const s = sessionsIn(sent.flatMap((e) => e.events)).map((e) => e.session);
+    expect(s.map((x) => `${x.seq}:${x.status}`)).toEqual(["0:ok", "1:exited", "2:ok"]);
+    expect(new Set(s.map((x) => x.sid)).size).toBe(1); // back within 30 s: the same session
+  });
+
+  it("can be turned off", async () => {
+    juju.init({ dsn: DSN, transport, storage: fakeAsyncStorage().storage, sessions: false, tracing: false });
+    emitAppState("background");
+    emitAppState("active");
+    await juju.flush();
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("app start and screen loads", () => {
+  const transactionsIn = (events: OutgoingEvent[]) => events.filter((e): e is TransactionEvent => e.type === "transaction");
+
+  it("measures from the native start that React Native reports", async () => {
+    vi.useFakeTimers();
+    const c = new Client({ dsn: DSN, transport, now: () => Date.now() });
+    // The native app started at 0, the JS runtime at 120 ms, the bundle at
+    // 400 ms, and juju.init runs at 900 ms (all from timeOrigin).
+    const perf = { now: () => 900, rnStartupTiming: { startTime: 0, initializeRuntimeStart: 120, executeJavaScriptBundleEntryPointStart: 400 } };
+    const initAt = Date.now();
+    const { done } = startAppStart(c, perf);
+    vi.advanceTimersByTime(300); // the first screen takes 300 ms more
+    done();
+    await c.flush();
+    const tx = transactionsIn(sent.flatMap((e) => e.events))[0]!;
+    expect(tx.transaction).toMatchObject({ name: "app.start", op: "app.start", measurements: { from_native_start: 1 } });
+    expect(Date.parse(tx.timestamp) - Date.parse(tx.transaction.start_timestamp)).toBe(1200);
+    expect(Date.parse(tx.transaction.start_timestamp)).toBe(initAt - 900);
+    expect(tx.transaction.spans?.map((s) => s.description)).toEqual([
+      "Native app start",
+      "Start the JavaScript runtime",
+      "Run the JavaScript bundle until juju.init",
+      "First screen",
+    ]);
+  });
+
+  // The values an iOS simulator reported (React Native 0.87, release build):
+  // startTime is the runtime's start, not the native app's, because iOS
+  // doesn't record one. It must not be passed off as a native start.
+  it("doesn't call the runtime start a native start (iOS)", async () => {
+    vi.useFakeTimers();
+    const c = new Client({ dsn: DSN, transport, now: () => Date.now() });
+    const perf = {
+      now: () => 1209925842,
+      rnStartupTiming: { startTime: 1209925496.3882918, initializeRuntimeStart: 1209925496.388167, executeJavaScriptBundleEntryPointStart: 1209925496.3858752 },
+    };
+    const initAt = Date.now();
+    const { done } = startAppStart(c, perf);
+    done();
+    await c.flush();
+    const tx = transactionsIn(sent.flatMap((e) => e.events))[0]!;
+    expect(tx.transaction.measurements).toEqual({ from_runtime_start: 1 });
+    expect(tx.transaction.spans?.map((s) => s.description)).not.toContain("Native app start");
+    // From the earliest value React Native gave, about 346 ms before init.
+    expect(initAt - Date.parse(tx.transaction.start_timestamp)).toBe(346);
+  });
+
+  it("falls back to juju.init when React Native has no startup timing", async () => {
+    vi.useFakeTimers();
+    const c = new Client({ dsn: DSN, transport, now: () => Date.now() });
+    const { done } = startAppStart(c, { now: () => 900 });
+    vi.advanceTimersByTime(300);
+    done();
+    await c.flush();
+    const tx = transactionsIn(sent.flatMap((e) => e.events))[0]!;
+    expect(tx.transaction.measurements).toEqual({ from_init: 1 });
+    expect(Date.parse(tx.timestamp) - Date.parse(tx.transaction.start_timestamp)).toBe(300);
+  });
+
+  // An app start nobody ended would otherwise run until some unrelated
+  // moment and pollute the numbers.
+  it("drops an app start nobody marked as done", async () => {
+    vi.useFakeTimers();
+    const c = new Client({ dsn: DSN, transport, now: () => Date.now() });
+    startAppStart(c, { now: () => 0 });
+    await vi.advanceTimersByTimeAsync(APP_START_DEADLINE_MS + 1);
+    await c.flush();
+    expect(transactionsIn(sent.flatMap((e) => e.events))).toEqual([]);
+  });
+
+  it("trackNavigation ends the app start and times each new screen", async () => {
+    vi.useFakeTimers();
+    let route = "Home";
+    let onState = () => {};
+    const ref = { addListener: (_: "state", cb: () => void) => ((onState = cb), () => {}), getCurrentRoute: () => ({ name: route }) };
+    juju.init({ dsn: DSN, transport, storage: fakeAsyncStorage().storage, sessions: false });
+    juju.trackNavigation(ref);
+    route = "Cart";
+    onState();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await juju.flush();
+    const names = transactionsIn(sent.flatMap((e) => e.events)).map((t) => `${t.transaction.op} ${t.transaction.name}`);
+    expect(names).toEqual(["app.start app.start", "screen.load Cart"]);
   });
 });

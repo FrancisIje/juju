@@ -71,8 +71,16 @@ export default function App() {
       await AsyncStorage.setItem(DSN_KEY, config.dsn);
       juju.init({ dsn: config.dsn, release: RELEASE, storage: AsyncStorage, debug: true, flushIntervalMs: 1000 });
       juju.setUser({ id: 'example-user' });
+      // The first screen is up. Apps with React Navigation get this from
+      // trackNavigation's onReady; this example has a single screen.
+      juju.appStarted();
       await juju.ready();
       add(`juju initialised (scenario: ${config.scenario ?? 'none'})`);
+      // What React Native reports about startup (ms from performance.timeOrigin),
+      // which juju's app.start transaction is built from.
+      const perf = (globalThis as unknown as { performance: { rnStartupTiming?: Record<string, unknown>; now(): number } }).performance;
+      const t = perf.rnStartupTiming;
+      add(`startup timing: start ${t?.startTime} runtime ${t?.initializeRuntimeStart} bundle ${t?.executeJavaScriptBundleEntryPointStart} end ${t?.endTime} now ${Math.round(perf.now())}`);
 
       if (config.scenario === 'nonfatal') {
         await scenarios.breadcrumbs();

@@ -90,7 +90,22 @@ window.onerror = (message) => {
 // Read the mode once: the "navigate" step below calls pushState, which drops
 // the #hash from the URL.
 const selftest = location.hash;
-if (selftest.startsWith("#selftest") && dsn) {
+// #selftest-healthy is a visit with no errors, for the crash-free rate: it
+// makes a request while the page loads (a span of the page load), changes
+// route after 2.5 s (a navigation transaction), and leaves at 5 s, so the
+// session ends as "exited".
+if (selftest === "#selftest-healthy" && dsn) {
+  fetch("../../README.md?during=load").then((r) => log(`fetched README while loading → ${r.status}`));
+  setTimeout(() => {
+    history.pushState(null, "", location.pathname.replace(/[^/]*$/, "") + "orders/8812" + location.search);
+    fetch("../../Makefile").then((r) => log(`fetched Makefile after navigating → ${r.status}`));
+    log("navigated to orders/8812 (a navigation transaction named …/orders/:id)");
+  }, 2500);
+  setTimeout(() => {
+    log("leaving the page cleanly");
+    location.href = "about:blank";
+  }, 5000);
+} else if (selftest.startsWith("#selftest") && dsn) {
   (async () => {
     document.getElementById("navigate").click();
     await actions["failed-fetch"]();

@@ -1,10 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
 const shots = process.env.JUJU_E2E_SHOTS;
 const slack = process.env.JUJU_E2E_SLACK;
 
-async function shoot(page: Page, name: string) {
+/** `focus`: an element to keep in view (below the fold), scrolled to after each resize. */
+async function shoot(page: Page, name: string, focus?: Locator) {
   // Every checked screen must fit a phone: nothing may make the page itself
   // scroll sideways (wide tables and code scroll inside their own box).
   await page.setViewportSize({ width: 390, height: 844 });
@@ -25,6 +26,7 @@ async function shoot(page: Page, name: string) {
       await page.setViewportSize({ width: w, height: h });
       // Two animation frames: enough for layout to settle after a resize.
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      if (focus) await focus.evaluate((el) => el.scrollIntoView({ block: "start" }));
       // animations: "disabled" finishes color transitions, so a theme switch
       // isn't captured halfway.
       await page.screenshot({ path: `${shots}/${name}-${theme}-${size}.png`, animations: "disabled" });
@@ -230,4 +232,148 @@ test("first run → project → error → resolve → regression alert → invit
   await expect(dana.getByText("Page not found").or(dana.getByText("project not found"))).toBeVisible();
 
   expect(errors).toEqual([]);
+});
+
+/** Sends events the way the SDKs do, to the public ingest API with the DSN's key. */
+async function ingest(page: Page, dsn: string, events: unknown[]) {
+  const m = /^(https?):\/\/([^@]+)@([^/]+)\/(\d+)/.exec(dsn)!;
+  for (let i = 0; i < events.length; i += 100) {
+    const res = await page.request.post(`${m[1]}://${m[3]}/api/v1/projects/${m[4]}/events`, {
+      headers: { "X-Juju-Key": m[2]! },
+      data: { sdk: { name: "juju.e2e", version: "0.0.0" }, events: events.slice(i, i + 100) },
+    });
+    expect(res.status()).toBe(202);
+  }
+}
+
+const iso = (ms: number) => new Date(ms).toISOString();
+
+// Phase 8: a week of sessions and page loads, then release health and
+// performance, read the way a person would. Runs after the first test,
+// whose account (Ada) and project it uses.
+test("sessions and transactions → releases → performance → a slow page load's spans", async ({ page }) => {
+  const errors: string[] = [];
+  // As in the first test: before login, /api/ui/me answers 401 (that's how
+  // the app learns nobody is logged in) and Chrome logs it. After, any 401
+  // is a real problem.
+  let loggedIn = false;
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() !== "error" || (!loggedIn && m.text().includes("status of 401"))) return;
+    errors.push(m.text());
+  });
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("ada@example.com");
+  await page.getByLabel("Password").fill("correct horse battery");
+  await page.getByRole("button", { name: "Log in" }).click();
+  loggedIn = true;
+  await expect(page).toHaveURL(/\/p\/\d+\/issues/);
+  const projectId = /\/p\/(\d+)\//.exec(page.url())![1];
+  const info = await page.evaluate((id) => fetch(`/api/ui/projects/${id}`).then((r) => r.json()), projectId);
+  const dsn: string = info.project.dsn;
+
+  // 7 days × 40 sessions. web@1.0.0 for the first 5 days with 1 crash a
+  // day; web@1.0.1 since, crashing 3 times a day (a bad release).
+  const day = 24 * 3600_000;
+  const now = Date.now();
+  const sessions: unknown[] = [];
+  for (let d = 6; d >= 0; d--) {
+    for (let i = 0; i < 40; i++) {
+      const start = now - d * day - (i + 1) * 60_000;
+      const release = d >= 2 ? "web@1.0.0" : "web@1.0.1";
+      const crashed = i < (release === "web@1.0.1" ? 3 : 1);
+      sessions.push({
+        event_id: randomUUID(), type: "session", platform: "javascript", release, environment: "production", timestamp: iso(start + 50_000),
+        user: { id: `u_${i % 25}` },
+        session: { sid: randomUUID(), seq: 1, status: crashed ? "crashed" : "exited", started: iso(start), errors: crashed ? 1 : i % 7 === 0 ? 2 : 0, duration_ms: 50_000 },
+      });
+    }
+  }
+  await ingest(page, dsn, sessions);
+
+  // Page loads: /checkout gets slower in web@1.0.1 because its cart API does.
+  const loads: unknown[] = [];
+  for (let d = 6; d >= 0; d--) {
+    for (let i = 0; i < 12; i++) {
+      const start = now - d * day - (i + 1) * 300_000;
+      const slow = d < 2;
+      const api = (slow ? 900 : 250) + i * 30;
+      const total = 400 + api + 120;
+      const failed = slow && i === 11; // the slowest one: a request that waited, then failed
+      loads.push({
+        event_id: randomUUID(), type: "transaction", platform: "javascript", release: slow ? "web@1.0.1" : "web@1.0.0", environment: "production", timestamp: iso(start + total),
+        transaction: {
+          name: "/checkout", op: "pageload", start_timestamp: iso(start), measurements: { ttfb: 180, fcp: 420, lcp: 380 + api },
+          spans: [
+            { span_id: "a", op: "browser", description: "Waiting for the server", start_timestamp: iso(start + 20), timestamp: iso(start + 180) },
+            { span_id: "b", op: "browser", description: "Build page (DOMContentLoaded)", start_timestamp: iso(start + 190), timestamp: iso(start + 390) },
+            { span_id: "c", op: "resource.script", description: "/assets/app.js", start_timestamp: iso(start + 200), timestamp: iso(start + 330) },
+            { span_id: "d", op: "http.client", description: "GET /api/cart", status: failed ? "error" : "ok", data: { status_code: failed ? 503 : 200 }, start_timestamp: iso(start + 400), timestamp: iso(start + 400 + api) },
+          ],
+        },
+      });
+      loads.push({
+        event_id: randomUUID(), type: "transaction", platform: "javascript", release: "web@1.0.0", environment: "production", timestamp: iso(start + 60 + i * 5),
+        transaction: { name: "/products/:id", op: "navigation", start_timestamp: iso(start) },
+      });
+    }
+  }
+  await ingest(page, dsn, loads);
+  // Ingest answers before the worker has stored everything (that's the
+  // point of the queue), and the pages refresh every 30 s. Wait until it's
+  // all stored, as a person opening the page a moment later would see it.
+  await expect
+    .poll(() => page.evaluate((id) => fetch(`/api/ui/projects/${id}/releases`).then((r) => r.json()).then((h) => h.totals.sessions), projectId), { timeout: 15_000 })
+    .toBe(280);
+  await expect
+    .poll(() => page.evaluate((id) => fetch(`/api/ui/projects/${id}/transactions`).then((r) => r.json()).then((l) => l.transactions.reduce((n: number, t: { count: number }) => n + t.count, 0)), projectId), { timeout: 15_000 })
+    .toBe(168);
+
+  // g r: release health. 280 sessions, 11 crashed (5 × 1 + 2 × 3).
+  await page.keyboard.press("g");
+  await page.keyboard.press("r");
+  await expect(page.getByRole("heading", { name: "Releases", level: 1 })).toBeVisible();
+  await expect(page.locator(".stat").first()).toContainText("96.1%", { timeout: 10_000 });
+  await expect(page.getByRole("row", { name: /web@1\.0\.1.*92\.5%/ })).toBeVisible(); // 6 of 80 crashed
+  await expect(page.getByRole("row", { name: /web@1\.0\.0.*97\.5%/ })).toBeVisible(); // 5 of 200
+  // The chart reads from the keyboard: focus it and step to a day.
+  const chart = page.getByRole("img", { name: /Crash-free sessions per day/ });
+  await chart.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator(".chart-tip")).toContainText("sessions (crashed)");
+  await page.keyboard.press("Escape");
+  await chart.blur(); // the screenshot shows the page, not a keyboard focus ring
+  await shoot(page, "10-releases");
+
+  // g p: performance. /checkout is the most frequent transaction.
+  await page.keyboard.press("g");
+  await page.keyboard.press("p");
+  await expect(page.getByRole("heading", { name: "Performance", level: 1 })).toBeVisible();
+  await expect(page.locator("tbody tr").first()).toContainText("/checkout");
+  await shoot(page, "11-performance");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/performance\/transaction\?name=%2Fcheckout&op=pageload/);
+  // The slowest sample opens with its spans; the failed request says so in words.
+  await expect(page.locator(".waterfall")).toContainText("GET /api/cart");
+  await expect(page.locator(".waterfall .chip.unresolved")).toHaveText("Server error");
+  // web@1.0.1 is slower than web@1.0.0: compare them in the "By release" table.
+  const byRelease = page.getByRole("table").filter({ hasText: "By release" });
+  await expect(byRelease.getByRole("row", { name: /web@1\.0\.1/ })).toBeVisible();
+  await expect(byRelease.getByRole("row", { name: /web@1\.0\.0/ })).toBeVisible();
+  await shoot(page, "12-transaction");
+  await shoot(page, "13-waterfall", page.getByRole("heading", { name: /Selected sample/ }));
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/\/performance$/);
+
+  // A server error shows in words, with a retry.
+  await page.route("**/api/ui/projects/*/releases*", (r) => r.fulfill({ status: 500, body: JSON.stringify({ error: "something went wrong on the server; try again" }) }));
+  await page.keyboard.press("g");
+  await page.keyboard.press("r");
+  await expect(page.getByRole("alert")).toContainText("Something went wrong on the server");
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await page.unroute("**/api/ui/projects/*/releases*");
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+
+  expect(errors.filter((e) => !e.includes("status of 500"))).toEqual([]);
 });

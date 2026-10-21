@@ -5,6 +5,7 @@ import 'package:clock/clock.dart';
 
 import 'dsn.dart';
 import 'stacktrace.dart';
+import 'tracing.dart';
 import 'transport.dart';
 
 typedef JsonMap = Map<String, dynamic>;
@@ -34,6 +35,7 @@ class ClientOptions {
     this.maxBreadcrumbs = 100,
     this.debug = false,
     this.log,
+    this.tracesSampleRate = 1,
     Random? random,
   }) : random = random ?? Random();
 
@@ -60,7 +62,24 @@ class ClientOptions {
   final int maxBreadcrumbs;
   final bool debug;
   final void Function(String message)? log;
+
+  /// Share of transactions to send, 0 to 1.
+  final double tracesSampleRate;
   final Random random;
+}
+
+/// How long an app can sit in the background and still continue the same session.
+const sessionResumeAfter = Duration(seconds: 30);
+
+class _Session {
+  _Session(this.sid, this.started);
+  final String sid;
+  final DateTime started;
+  int seq = 0;
+  String status = 'ok';
+  int errors = 0;
+  int? durationMs;
+  DateTime? pausedAt;
 }
 
 const jujuVersion = '0.1.0';
@@ -75,7 +94,7 @@ const _maxBackoff = Duration(seconds: 60);
 /// Builds events, queues them, sends them in batches and retries with
 /// backoff. A port of @juju/core's Client, so the JavaScript and Dart SDKs
 /// follow the same rules.
-class JujuClient {
+class JujuClient implements TransactionHost {
   JujuClient(this.options)
       : dsn = Dsn.parse(options.dsn), // throws early on a bad DSN
         _isInApp = options.isInApp ?? makeIsInApp() {
@@ -113,15 +132,26 @@ class JujuClient {
   // a mark to an object without keeping it alive.
   final _seen = Expando<bool>('juju-seen');
 
+  _Session? _session;
+  JujuTransaction? _active;
+
   int get pending => _queue.length;
   List<JsonMap> get breadcrumbs => List.unmodifiable(_breadcrumbs);
 
   /// Reports an error and returns its event_id, or "" if it was dropped.
   /// Never throws: a bug in the error reporter must not break the app.
-  String captureException(Object error, StackTrace? stack, {Map<String, String>? tags, String? mechanism}) {
+  /// [crashed]: the error reached a global hook nothing else handled, and
+  /// ends the session as crashed.
+  String captureException(Object error, StackTrace? stack, {Map<String, String>? tags, String? mechanism, bool crashed = false}) {
     try {
       if (_closed) return '';
-      if (_markSeen(error)) return '';
+      if (_markSeen(error)) {
+        // Already reported (by the app, before rethrowing it). Not a second
+        // error, but if it's now unhandled the session still crashed.
+        if (crashed) _sessionError(crashed: true, count: false);
+        return '';
+      }
+      _sessionError(crashed: crashed, count: true);
       JsonMap? event = _buildEvent(error, stack, tags, mechanism);
       if (options.beforeSend != null) event = options.beforeSend!(event);
       if (event == null) return '';
@@ -143,6 +173,169 @@ class JujuClient {
     if (_breadcrumbs.length > options.maxBreadcrumbs) _breadcrumbs.removeAt(0);
   }
 
+  // Sessions: one run of the app in the foreground. Each change is sent as
+  // an update with a higher seq; the server merges them into one row. See
+  // @juju/core's client.ts for the reasoning, which is the same here.
+
+  /// Starts a new session, ending the current one first.
+  void startSession() {
+    if (_closed) return;
+    if (_session != null) endSession();
+    _session = _Session(uuid4(options.random), clock.now());
+    _sendSession(_session!);
+  }
+
+  /// Ends the session normally.
+  void endSession() {
+    final s = _session;
+    if (s == null) return;
+    _session = null;
+    if (s.pausedAt != null) return; // already sent as exited when paused
+    s
+      ..status = 'exited'
+      ..durationMs = clock.now().difference(s.started).inMilliseconds
+      ..seq += 1;
+    _sendSession(s);
+  }
+
+  /// The app went to the background, where the OS may kill it without
+  /// warning: send the session as ended now. resumeSession may continue it.
+  void pauseSession() {
+    final s = _session;
+    if (s == null || s.pausedAt != null) return;
+    s
+      ..pausedAt = clock.now()
+      ..status = 'exited'
+      ..durationMs = clock.now().difference(s.started).inMilliseconds
+      ..seq += 1;
+    _sendSession(s);
+  }
+
+  /// Back in the foreground: continue the session after a short time away,
+  /// start a new one after [sessionResumeAfter].
+  void resumeSession() {
+    final s = _session;
+    if (s == null) return startSession();
+    final paused = s.pausedAt;
+    if (paused == null) return;
+    if (clock.now().difference(paused) > sessionResumeAfter) {
+      _session = null;
+      return startSession();
+    }
+    s
+      ..pausedAt = null
+      ..status = 'ok'
+      ..durationMs = null
+      ..seq += 1;
+    _sendSession(s);
+  }
+
+  String? get sessionId => _session?.sid;
+
+  void _sessionError({required bool crashed, required bool count}) {
+    final s = _session;
+    if (s == null || _closed) return;
+    if (count) s.errors++;
+    if (crashed) {
+      s
+        ..status = 'crashed'
+        ..durationMs = clock.now().difference(s.started).inMilliseconds;
+      _session = null; // a crash ends the session
+    }
+    s.seq++;
+    _sendSession(s);
+  }
+
+  void _sendSession(_Session s) {
+    final event = <String, dynamic>{
+      'event_id': uuid4(options.random),
+      'type': 'session',
+      'timestamp': clock.now().toUtc().toIso8601String(),
+      'platform': options.platform,
+      if (options.release != null) 'release': options.release,
+      if (options.environment != null) 'environment': options.environment,
+      if (_user != null) 'user': {..._user!},
+      'session': {
+        'sid': s.sid,
+        'seq': s.seq,
+        'status': s.status,
+        'started': s.started.toUtc().toIso8601String(),
+        'errors': s.errors,
+        if (s.durationMs != null) 'duration_ms': s.durationMs,
+      },
+    };
+    // Only the latest state matters: replace an update still waiting
+    // (offline) instead of queueing both.
+    final waiting = _queue.indexWhere((e) => e['type'] == 'session' && (e['session'] as Map)['sid'] == s.sid);
+    if (waiting >= 0) {
+      _queue[waiting] = event;
+      _persist();
+      _schedule(options.flushInterval);
+      return;
+    }
+    _enqueue(event);
+  }
+
+  // Transactions.
+
+  /// Starts timing an operation. [active] makes it the transaction that
+  /// automatic spans (HTTP requests) join; starting another active one
+  /// finishes the previous one first.
+  JujuTransaction startTransaction(String name, String op,
+      {DateTime? start, Duration? idleTimeout, Duration? maxDuration, bool active = false}) {
+    final rate = options.tracesSampleRate;
+    final tx = JujuTransaction(this,
+        name: name,
+        op: op,
+        start: start,
+        idleTimeout: idleTimeout,
+        maxDuration: maxDuration,
+        sampled: rate >= 1 || options.random.nextDouble() < rate,
+        random: options.random);
+    if (active) {
+      _active?.finish();
+      _active = tx;
+    }
+    return tx;
+  }
+
+  JujuTransaction? get activeTransaction => (_active?.finished ?? true) ? null : _active;
+
+  /// A span in the active transaction, or a no-op span if there is none.
+  JujuSpan startSpan(String op, {String? description, JsonMap? data}) =>
+      activeTransaction?.startChild(op, description: description, data: data) ?? noopSpan();
+
+  @override
+  void finishTransaction(JujuTransaction tx) {
+    if (identical(_active, tx)) _active = null;
+    final end = tx.end;
+    if (!tx.sampled || _closed || end == null) return;
+    try {
+      final spans = tx.spans.where((s) => s.end != null && !s.start.isAfter(end)).toList();
+      _enqueue({
+        'event_id': uuid4(options.random),
+        'type': 'transaction',
+        'timestamp': isoTime(end),
+        'platform': options.platform,
+        if (options.release != null) 'release': options.release,
+        if (options.environment != null) 'environment': options.environment,
+        if (_user != null) 'user': {..._user!},
+        if (_tags.isNotEmpty) 'tags': {..._tags},
+        if (options.context != null) 'context': options.context!(),
+        'transaction': {
+          'name': tx.name,
+          'op': tx.op,
+          'status': tx.status,
+          'start_timestamp': isoTime(tx.start),
+          if (tx.measurements.isNotEmpty) 'measurements': {...tx.measurements},
+          if (spans.isNotEmpty) 'spans': [for (final s in spans) s.toJson(end)],
+        },
+      });
+    } catch (e) {
+      _log('could not record transaction: $e');
+    }
+  }
+
   void setUser(JsonMap? user) => _user = user;
   void setTag(String key, String value) => _tags[key] = value;
 
@@ -160,6 +353,7 @@ class JujuClient {
   Future<void> persistNow() => _persist();
 
   void close() {
+    _active?.finish();
     _closed = true;
     _timer?.cancel();
     _timer = null;

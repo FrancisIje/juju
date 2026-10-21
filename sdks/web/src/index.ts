@@ -8,12 +8,13 @@
 // throws on an invalid DSN: a configuration mistake should be loud, at
 // startup, not a silent absence of error reports.
 
-import { Client, fetchTransport, parseDsn, VERSION, type ClientOptions, type Transport, type User } from "@juju/core";
+import { Client, fetchTransport, parseDsn, VERSION, type ClientOptions, type Transaction, type Transport, type User } from "@juju/core";
 import { instrumentClicks, instrumentConsole, instrumentFetch, instrumentHistory, instrumentXHR } from "./breadcrumbs";
 import { installErrorHandlers } from "./errors";
 import { installLifecycle } from "./lifecycle";
+import { installNavigationTracing, installPageLoad, shortUrl } from "./performance";
 
-export type { JujuEvent, User, Breadcrumb } from "@juju/core";
+export type { JujuEvent, User, Breadcrumb, Transaction, Span } from "@juju/core";
 
 export interface WebOptions {
   dsn: string;
@@ -23,6 +24,12 @@ export interface WebOptions {
   beforeSend?: ClientOptions["beforeSend"];
   /** Which breadcrumb sources to record. All are on by default. */
   breadcrumbs?: Partial<Record<"console" | "fetch" | "xhr" | "clicks" | "navigation", boolean>>;
+  /** Count sessions (page loads) for the crash-free rate. Default true. */
+  sessions?: boolean;
+  /** Time page loads, route changes and their requests. Default true. */
+  tracing?: boolean;
+  /** Share of page loads and navigations to send, 0 to 1. Default 1. */
+  tracesSampleRate?: number;
   /** Log what the SDK is doing to the console. */
   debug?: boolean;
   /** Replace how events are sent (used by tests). */
@@ -33,6 +40,10 @@ export interface WebOptions {
 }
 
 let client: Client | undefined;
+// Hands out transactions before init (or after close) that go nowhere, so
+// app code timing things never has to check whether juju is set up.
+const inert = new Client({ dsn: "https://pk_inert@localhost/0", transport: { send: async () => ({ ok: true }) } });
+inert.close();
 let uninstallers: Array<() => void> = [];
 
 export function init(options: WebOptions): void {
@@ -59,15 +70,17 @@ export function init(options: WebOptions): void {
   if (options.beforeSend) clientOptions.beforeSend = options.beforeSend;
   if (options.debug) clientOptions.debug = options.debug;
   if (options.flushIntervalMs) clientOptions.flushIntervalMs = options.flushIntervalMs;
+  if (options.tracesSampleRate !== undefined) clientOptions.tracesSampleRate = options.tracesSampleRate;
   const c = new Client({ ...clientOptions, transport: options.transport ?? fetchTransport(parseDsn(options.dsn), nativeFetch) });
   client = c;
 
   const isJujuUrl = (url: string) => url.startsWith(c.dsn.origin + "/api/");
   const crumbs = { console: true, fetch: true, xhr: true, clicks: true, navigation: true, ...options.breadcrumbs };
-  uninstallers = [installErrorHandlers(c), installLifecycle(c)];
+  uninstallers = [installErrorHandlers(c), installLifecycle(c, options.sessions ?? true)];
+  if (options.tracing ?? true) uninstallers.push(installPageLoad(c), installNavigationTracing(c));
   if (crumbs.console) uninstallers.push(instrumentConsole(c));
   if (crumbs.fetch) uninstallers.push(instrumentFetch(c, isJujuUrl));
-  if (crumbs.xhr) uninstallers.push(instrumentXHR(c, isJujuUrl, typeof XMLHttpRequest === "undefined" ? undefined : XMLHttpRequest));
+  if (crumbs.xhr) uninstallers.push(instrumentXHR(c, isJujuUrl, typeof XMLHttpRequest === "undefined" ? undefined : XMLHttpRequest, shortUrl));
   if (crumbs.clicks) uninstallers.push(instrumentClicks(c));
   if (crumbs.navigation) uninstallers.push(instrumentHistory(c));
 }
@@ -88,6 +101,19 @@ export function setTag(key: string, value: string): void {
 
 export function addBreadcrumb(crumb: { type: string; message?: string; data?: Record<string, unknown> }): void {
   client?.addBreadcrumb(crumb);
+}
+
+/**
+ * Times something the app does, as a transaction with spans:
+ *
+ *   const tx = juju.startTransaction({ name: "checkout", op: "custom" });
+ *   const span = tx.startChild({ op: "db", description: "save order" });
+ *   ...; span.finish(); tx.finish();
+ *
+ * Before init it returns a transaction that sends nothing.
+ */
+export function startTransaction(options: { name: string; op?: string }): Transaction {
+  return (client ?? inert).startTransaction({ op: "custom", ...options });
 }
 
 /** Send queued events now. Resolves when the send finishes or fails. */

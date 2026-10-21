@@ -1,4 +1,4 @@
-import type { JujuEvent, QueueStorage } from "@juju/core";
+import type { OutgoingEvent, QueueStorage } from "@juju/core";
 
 /** The parts of @react-native-async-storage/async-storage we use. */
 export interface AsyncStorageLike {
@@ -12,17 +12,17 @@ export const STORAGE_KEY = "@juju/queue";
 /** Keeps the event queue in AsyncStorage, so it survives the app being killed. */
 export function asyncStorageQueue(storage: AsyncStorageLike, key = STORAGE_KEY): QueueStorage {
   return {
-    async load(): Promise<JujuEvent[]> {
+    async load(): Promise<OutgoingEvent[]> {
       const raw = await storage.getItem(key);
       if (!raw) return [];
       try {
         const parsed: unknown = JSON.parse(raw);
-        return Array.isArray(parsed) ? (parsed as JujuEvent[]) : [];
+        return Array.isArray(parsed) ? (parsed as OutgoingEvent[]) : [];
       } catch {
         return []; // a half-written value from a crash mid-write: start fresh rather than fail
       }
     },
-    async save(events: JujuEvent[]): Promise<void> {
+    async save(events: OutgoingEvent[]): Promise<void> {
       if (events.length === 0) await storage.removeItem(key);
       else await storage.setItem(key, JSON.stringify(events));
     },

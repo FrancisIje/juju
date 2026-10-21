@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client, type QueueStorage } from "../src/client";
 import type { SendResult, Transport } from "../src/transport";
-import type { Envelope, JujuEvent } from "../src/types";
+import type { Envelope, JujuEvent, OutgoingEvent } from "../src/types";
 
 const DSN = "https://pk_abc@juju.example.com/1";
 
@@ -88,7 +88,7 @@ describe("the next launch", () => {
   it("doesn't wipe saved events when an error happens before loading finishes", async () => {
     let finishLoad!: (events: JujuEvent[]) => void;
     const old = { event_id: "11111111-1111-4111-8111-111111111111", type: "error", timestamp: "", platform: "javascript", exception: { type: "Error", message: "from last launch" } } as JujuEvent;
-    let stored: JujuEvent[] = [old];
+    let stored: OutgoingEvent[] = [old];
     const storage: QueueStorage = {
       load: () => new Promise((r) => (finishLoad = r)), // slow disk
       save: async (events) => void (stored = events),
@@ -99,7 +99,7 @@ describe("the next launch", () => {
     expect(stored).toEqual([old]); // not overwritten yet: the save waits for the load
     finishLoad([old]);
     await c.persistNow();
-    expect(stored.map((e) => e.exception.message)).toEqual(["from last launch", "right at launch"]);
+    expect(stored.map((e) => (e as JujuEvent).exception.message)).toEqual(["from last launch", "right at launch"]);
   });
 
   it("ignores saved events already in the queue, and garbage in storage", async () => {

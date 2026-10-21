@@ -46,8 +46,15 @@ func Normalize(raw json.RawMessage, now time.Time) (*Event, error) {
 	if errs := validateRequired(&e); errs != nil {
 		return nil, errs
 	}
+	clientEnd, _ := time.Parse(time.RFC3339Nano, e.Timestamp) // before repair: transactions shift by the difference
 	e.repairTimestamp(now)
 	e.repairFields()
+	switch e.Type {
+	case TypeSession:
+		e.repairSession()
+	case TypeTransaction:
+		e.repairTransaction(clientEnd)
+	}
 	return &e, nil
 }
 
@@ -63,10 +70,22 @@ func validateRequired(e *Event) ValidationError {
 		e.EventID = u.String() // canonical lowercase form, so dedupe matches regardless of case
 	}
 
-	if e.Type != "error" {
-		errs = append(errs, FieldError{"type", fmt.Sprintf("%q is not supported (expected \"error\")", e.Type)})
-	} else if e.Exception == nil || (strings.TrimSpace(e.Exception.Type) == "" && strings.TrimSpace(e.Exception.Message) == "") {
-		errs = append(errs, FieldError{"exception", "needs a type or a message"})
+	// Each type carries its own payload; a payload for another type is
+	// dropped, so a session update can never create an issue.
+	switch e.Type {
+	case TypeError:
+		e.Session, e.Transaction = nil, nil
+		if e.Exception == nil || (strings.TrimSpace(e.Exception.Type) == "" && strings.TrimSpace(e.Exception.Message) == "") {
+			errs = append(errs, FieldError{"exception", "needs a type or a message"})
+		}
+	case TypeSession:
+		e.Exception, e.Transaction = nil, nil
+		errs = append(errs, validateSession(e)...)
+	case TypeTransaction:
+		e.Exception, e.Session = nil, nil
+		errs = append(errs, validateTransaction(e)...)
+	default:
+		errs = append(errs, FieldError{"type", fmt.Sprintf("%q is not supported (expected error, session or transaction)", e.Type)})
 	}
 	return errs
 }
@@ -105,22 +124,8 @@ func (e *Event) repairFields() {
 	e.Environment = e.truncate("environment", e.Environment, maxEnvironment)
 	e.Release = e.truncate("release", e.Release, maxRelease)
 
-	ex := e.Exception
-	ex.Type = e.truncate("exception.type", ex.Type, maxTypeBytes)
-	ex.Message = e.truncate("exception.message", ex.Message, maxMessageBytes)
-	if st := ex.Stacktrace; st != nil {
-		if n := len(st.Frames); n > maxFrames {
-			// Keep both ends: the crash site and the entry point. Deep
-			// recursion in the middle is the least useful part.
-			st.Frames = slices.Concat(st.Frames[:keepTopFrames], st.Frames[n-keepRootFrames:])
-			e.repair(fmt.Sprintf("exception.stacktrace: %d frames, kept first %d and last %d", n, keepTopFrames, keepRootFrames))
-		}
-		for i := range st.Frames {
-			f := &st.Frames[i]
-			f.Raw = nil // server-owned: set only by symbolication
-			f.Function, _ = truncate(f.Function, maxFrameField)
-			f.Filename, _ = truncate(f.Filename, maxFrameField)
-		}
+	if ex := e.Exception; ex != nil {
+		e.repairException(ex)
 	}
 
 	if n := len(e.Breadcrumbs); n > maxBreadcrumbs {
@@ -132,6 +137,27 @@ func (e *Event) repairFields() {
 	}
 
 	e.repairTags()
+}
+
+func (e *Event) repairException(ex *Exception) {
+	ex.Type = e.truncate("exception.type", ex.Type, maxTypeBytes)
+	ex.Message = e.truncate("exception.message", ex.Message, maxMessageBytes)
+	st := ex.Stacktrace
+	if st == nil {
+		return
+	}
+	if n := len(st.Frames); n > maxFrames {
+		// Keep both ends: the crash site and the entry point. Deep
+		// recursion in the middle is the least useful part.
+		st.Frames = slices.Concat(st.Frames[:keepTopFrames], st.Frames[n-keepRootFrames:])
+		e.repair(fmt.Sprintf("exception.stacktrace: %d frames, kept first %d and last %d", n, keepTopFrames, keepRootFrames))
+	}
+	for i := range st.Frames {
+		f := &st.Frames[i]
+		f.Raw = nil // server-owned: set only by symbolication
+		f.Function, _ = truncate(f.Function, maxFrameField)
+		f.Filename, _ = truncate(f.Filename, maxFrameField)
+	}
 }
 
 func (e *Event) repairTags() {

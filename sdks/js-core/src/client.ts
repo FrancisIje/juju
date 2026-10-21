@@ -1,8 +1,9 @@
 import { Breadcrumbs } from "./breadcrumbs";
 import { parseDsn, type Dsn } from "./dsn";
 import { defaultIsInApp, exceptionFromThrown, type InAppFn } from "./stacktrace";
+import { isoTime, monotonicClock, noopSpan, Transaction, type Span, type SpanOptions, type TransactionHost, type TransactionOptions } from "./tracing";
 import { byteLength, fetchTransport, type SendResult, type Transport } from "./transport";
-import type { Breadcrumb, Envelope, JujuEvent, SdkInfo, User } from "./types";
+import type { Breadcrumb, Envelope, JujuEvent, OutgoingEvent, SdkInfo, SessionData, SessionEvent, TransactionEvent, User } from "./types";
 import { uuid4 } from "./uuid";
 
 export interface ClientOptions {
@@ -36,25 +37,40 @@ export interface ClientOptions {
    * process before a send can finish.
    */
   persistence?: QueueStorage;
+  /** The clock for transactions, in ms since 1970. Defaults to a monotonic clock. */
+  now?: () => number;
+  /** Share of transactions to send, 0 to 1. Default 1: all of them. */
+  tracesSampleRate?: number;
 }
 
 /** Somewhere to keep queued events between app launches. */
 export interface QueueStorage {
-  load(): Promise<JujuEvent[]>;
-  save(events: JujuEvent[]): Promise<void>;
+  load(): Promise<OutgoingEvent[]>;
+  save(events: OutgoingEvent[]): Promise<void>;
+}
+
+/** How long an app can sit in the background and still continue the same session. */
+export const SESSION_RESUME_MS = 30_000;
+
+interface SessionState extends Omit<SessionData, "started"> {
+  startedMs: number;
+  pausedAt?: number;
 }
 
 const BASE_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
 
-export class Client {
+export class Client implements TransactionHost {
   readonly dsn: Dsn;
   readonly breadcrumbs: Breadcrumbs;
 
   private readonly opts: Required<Pick<ClientOptions, "flushIntervalMs" | "maxBatchSize" | "maxQueueSize" | "random">> & ClientOptions;
   private readonly transport: Transport;
   private readonly isInApp: InAppFn;
-  private queue: JujuEvent[] = [];
+  private queue: OutgoingEvent[] = [];
+  private session: SessionState | undefined;
+  private active: Transaction | undefined;
+  private readonly clock: () => number;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private timerDueAt = 0;
   private inFlight: Promise<void> | undefined;
@@ -86,6 +102,7 @@ export class Client {
     this.transport = options.transport ?? fetchTransport(this.dsn);
     this.isInApp = options.isInApp ?? defaultIsInApp;
     this.breadcrumbs = new Breadcrumbs(options.maxBreadcrumbs ?? 100);
+    this.clock = options.now ?? monotonicClock();
 
     // Load before any save: an error captured in the first moments after
     // launch would otherwise save a queue without the old events, wiping
@@ -98,13 +115,20 @@ export class Client {
    * Reports an error and returns its event_id, or "" if it was dropped.
    * Never throws: a bug in the error reporter must not crash the app.
    */
-  captureException(thrown: unknown, extra?: { tags?: Record<string, string> }): string {
+  captureException(thrown: unknown, extra?: { tags?: Record<string, string>; crashed?: boolean }): string {
     try {
       if (this.closed) return "";
       if (typeof thrown === "object" && thrown !== null) {
-        if (this.seen.has(thrown)) return "";
+        if (this.seen.has(thrown)) {
+          // Already reported (say, by the app, before it rethrew). Not a
+          // second error, but if it's now crashing the app, the session
+          // must still end as crashed.
+          if (extra?.crashed) this.sessionError(true, false);
+          return "";
+        }
         this.seen.add(thrown);
       }
+      this.sessionError(extra?.crashed ?? false, true);
       let event: JujuEvent | null = this.buildEvent(thrown, extra?.tags);
       if (this.opts.beforeSend) event = this.opts.beforeSend(event);
       if (!event) return "";
@@ -120,6 +144,178 @@ export class Client {
       this.breadcrumbs.add({ ...crumb, timestamp: crumb.timestamp ?? new Date().toISOString() });
     } catch {
       // never throw into the app
+    }
+  }
+
+  // Sessions -----------------------------------------------------------
+  //
+  // A session is one run of the app in the foreground, or one page load.
+  // Each change is sent as an update with a higher seq; the server merges
+  // them into one row. Updates wait in the same queue as errors, so they
+  // get the same retries, offline saving and batching.
+
+  /** Starts a new session, ending the current one first. */
+  startSession(): void {
+    if (this.closed) return;
+    if (this.session) this.endSession();
+    this.session = { sid: uuid4(), seq: 0, status: "ok", errors: 0, startedMs: Date.now() };
+    this.sendSession();
+  }
+
+  /** Ends the session normally (the page closes, the app quits). */
+  endSession(): void {
+    const s = this.session;
+    if (!s) return;
+    this.session = undefined;
+    if (s.pausedAt !== undefined) return; // already sent as exited when it was paused
+    s.status = "exited";
+    s.duration_ms = Math.max(0, Math.round(Date.now() - s.startedMs));
+    s.seq++;
+    this.sendSession(s);
+  }
+
+  /**
+   * The app went to the background. The OS may kill it there without
+   * warning, so the session is sent as ended now. If the app comes back
+   * soon, resumeSession continues it.
+   */
+  pauseSession(): void {
+    const s = this.session;
+    if (!s || s.pausedAt !== undefined) return;
+    s.pausedAt = Date.now();
+    s.status = "exited";
+    s.duration_ms = Math.max(0, Math.round(s.pausedAt - s.startedMs));
+    s.seq++;
+    this.sendSession(s);
+  }
+
+  /**
+   * The app is back in the foreground. A short trip away (checking a
+   * message) continues the same session; after SESSION_RESUME_MS it's a
+   * new one. Without this, every app switch would count as a session.
+   */
+  resumeSession(): void {
+    const s = this.session;
+    if (!s) return this.startSession();
+    if (s.pausedAt === undefined) return;
+    if (Date.now() - s.pausedAt > SESSION_RESUME_MS) {
+      this.session = undefined;
+      return this.startSession();
+    }
+    s.pausedAt = undefined;
+    s.status = "ok";
+    delete s.duration_ms;
+    s.seq++;
+    this.sendSession(s);
+  }
+
+  /** The current session's id, if one is running. */
+  sessionId(): string | undefined {
+    return this.session?.sid;
+  }
+
+  private sessionError(crashed: boolean, count: boolean): void {
+    const s = this.session;
+    if (!s || this.closed) return;
+    if (count) s.errors++;
+    if (crashed) {
+      s.status = "crashed";
+      s.duration_ms = Math.max(0, Math.round(Date.now() - s.startedMs));
+      this.session = undefined; // a crash ends the session
+    }
+    s.seq++;
+    this.sendSession(s);
+  }
+
+  private sendSession(s: SessionState | undefined = this.session): void {
+    if (!s) return;
+    const session: SessionData = { sid: s.sid, seq: s.seq, status: s.status, started: new Date(s.startedMs).toISOString(), errors: s.errors };
+    if (s.duration_ms !== undefined) session.duration_ms = s.duration_ms;
+    const event: SessionEvent = { event_id: uuid4(), type: "session", timestamp: new Date().toISOString(), platform: this.opts.platform ?? "javascript", session };
+    if (this.opts.release) event.release = this.opts.release;
+    if (this.opts.environment) event.environment = this.opts.environment;
+    if (this.user) event.user = { ...this.user };
+    // Only the latest state of a session matters. If an older update is
+    // still waiting (offline), replace it instead of queueing both: an app
+    // switched away from 50 times offline sends one update, not 50.
+    const waiting = this.queue.findIndex((e) => e.type === "session" && e.session.sid === s.sid);
+    if (waiting >= 0) {
+      this.queue[waiting] = event;
+      void this.persist();
+      this.schedule(this.opts.flushIntervalMs);
+      return;
+    }
+    this.enqueue(event);
+  }
+
+  // Transactions ---------------------------------------------------------
+
+  now(): number {
+    return this.clock();
+  }
+
+  /**
+   * Starts timing an operation. `active: true` makes it the transaction
+   * that automatic spans (HTTP requests) join; starting another active one
+   * finishes the previous one first.
+   */
+  startTransaction(opts: TransactionOptions & { active?: boolean }): Transaction {
+    const rate = this.opts.tracesSampleRate ?? 1;
+    const tx = new Transaction(this, { sampled: rate >= 1 || this.opts.random() < rate, ...opts });
+    if (opts.active) {
+      this.active?.finish();
+      this.active = tx;
+    }
+    return tx;
+  }
+
+  /** The transaction automatic spans join, if one is running. */
+  activeTransaction(): Transaction | undefined {
+    return this.active?.finished ? undefined : this.active;
+  }
+
+  /** Starts a span in the active transaction, or a no-op span if there is none. */
+  startSpan(opts: SpanOptions): Span {
+    return this.activeTransaction()?.startChild(opts) ?? noopSpan();
+  }
+
+  /** @internal Called by Transaction.finish. */
+  finishTransaction(tx: Transaction): void {
+    if (this.active === tx) this.active = undefined;
+    if (!tx.sampled || this.closed || tx.end === undefined) return;
+    try {
+      const event: TransactionEvent = {
+        event_id: uuid4(),
+        type: "transaction",
+        timestamp: isoTime(tx.end),
+        platform: this.opts.platform ?? "javascript",
+        transaction: { name: tx.name, op: tx.op, status: tx.status, start_timestamp: isoTime(tx.start) },
+      };
+      const spans = tx.spans.filter((sp) => sp.end !== undefined && sp.start <= tx.end!);
+      if (spans.length > 0) {
+        event.transaction.spans = spans.map((sp) => {
+          const out: NonNullable<TransactionEvent["transaction"]["spans"]>[number] = {
+            span_id: sp.spanId,
+            op: sp.op,
+            start_timestamp: isoTime(sp.start),
+            timestamp: isoTime(Math.min(sp.end!, tx.end!)),
+          };
+          if (sp.description) out.description = sp.description;
+          if (sp.status) out.status = sp.status;
+          if (sp.data) out.data = sp.data;
+          return out;
+        });
+      }
+      if (Object.keys(tx.measurements).length > 0) event.transaction.measurements = { ...tx.measurements };
+      if (this.opts.release) event.release = this.opts.release;
+      if (this.opts.environment) event.environment = this.opts.environment;
+      if (this.user) event.user = { ...this.user };
+      if (Object.keys(this.tags).length > 0) event.tags = { ...this.tags };
+      const context = this.opts.context?.();
+      if (context) event.context = context;
+      this.enqueue(event);
+    } catch (err) {
+      this.log("could not record transaction", err);
     }
   }
 
@@ -164,7 +360,7 @@ export class Client {
    */
   drain(send: (envelope: Envelope, body: string) => boolean, maxBytes: number): void {
     while (this.queue.length > 0) {
-      const batch: JujuEvent[] = [];
+      const batch: OutgoingEvent[] = [];
       let body = "";
       for (const e of this.queue) {
         const next = JSON.stringify(this.envelope([...batch, e]));
@@ -184,6 +380,7 @@ export class Client {
   }
 
   close(): void {
+    this.active?.finish();
     this.closed = true;
     clearTimeout(this.timer);
     this.timer = undefined;
@@ -209,7 +406,7 @@ export class Client {
     return event;
   }
 
-  private enqueue(event: JujuEvent): boolean {
+  private enqueue(event: OutgoingEvent): boolean {
     if (this.queue.length >= this.opts.maxQueueSize) {
       // Drop the newest, not the oldest: when the queue overflows it's
       // usually a loop repeating the same error, and the first ones are
@@ -280,7 +477,7 @@ export class Client {
 
   // Remove by identity, not by position: a beacon may have taken events from
   // the front of the queue while this batch was in flight.
-  private remove(batch: JujuEvent[]): void {
+  private remove(batch: OutgoingEvent[]): void {
     const sent = new Set(batch);
     this.queue = this.queue.filter((e) => !sent.has(e));
     void this.persist();
@@ -325,7 +522,7 @@ export class Client {
     // after launch and saved). event_id tells them apart.
     const known = new Set(this.queue.map((e) => e.event_id));
     const restored = saved.filter(
-      (e): e is JujuEvent => typeof e === "object" && e !== null && typeof (e as JujuEvent).event_id === "string" && !known.has((e as JujuEvent).event_id),
+      (e): e is OutgoingEvent => typeof e === "object" && e !== null && typeof (e as OutgoingEvent).event_id === "string" && !known.has((e as OutgoingEvent).event_id),
     );
     if (restored.length === 0) return;
     // Older events first, and never more than the queue allows.
@@ -334,7 +531,7 @@ export class Client {
     this.schedule(0);
   }
 
-  private envelope(events: JujuEvent[]): Envelope {
+  private envelope(events: OutgoingEvent[]): Envelope {
     return { sdk: this.opts.sdk ?? { name: "juju.core", version: VERSION }, events };
   }
 

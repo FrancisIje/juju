@@ -21,6 +21,9 @@ VoidCallback installFlutterErrorHook(JujuClient client) {
         details.exception,
         details.stack,
         mechanism: 'flutter_error',
+        // Nothing caught it: the screen broke (red in debug, grey in
+        // release). That counts as a crash of the session.
+        crashed: true,
         tags: {if (details.library != null) 'flutter_library': details.library!},
       );
     }
@@ -39,7 +42,7 @@ VoidCallback installFlutterErrorHook(JujuClient client) {
 VoidCallback installPlatformErrorHook(JujuClient client, PlatformDispatcher dispatcher) {
   final previous = dispatcher.onError;
   bool handler(Object error, StackTrace stack) {
-    client.captureException(error, stack, mechanism: 'platform_dispatcher');
+    client.captureException(error, stack, mechanism: 'platform_dispatcher', crashed: true);
     // Returning false means "not handled", so Flutter still prints it as
     // usual. If the app had its own handler, its answer wins.
     return previous?.call(error, stack) ?? false;

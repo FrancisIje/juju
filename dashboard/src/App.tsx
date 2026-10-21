@@ -8,7 +8,10 @@ import { Issues } from "./pages/Issues";
 import { InvitePage } from "./pages/InvitePage";
 import { Login } from "./pages/Login";
 import { NewProject } from "./pages/NewProject";
+import { Performance } from "./pages/Performance";
+import { Releases } from "./pages/Releases";
 import { Settings, type SettingsTab } from "./pages/Settings";
+import { Transaction } from "./pages/Transaction";
 
 /** The pages you can open without being logged in. */
 const authPage = (path: string) => path === "/login" || path === "/signup" || path.startsWith("/invite/");
@@ -137,6 +140,27 @@ function Routed({ path, query }: { path: string; query: URLSearchParams }) {
     return (
       <Shell projectId={Number(m.project)}>
         <Issues key={m.project} projectId={Number(m.project)} />
+      </Shell>
+    );
+  }
+  if ((m = match("/p/:project/releases", path))) {
+    return (
+      <Shell projectId={Number(m.project)}>
+        <Releases key={m.project} projectId={Number(m.project)} />
+      </Shell>
+    );
+  }
+  if ((m = match("/p/:project/performance/transaction", path))) {
+    return (
+      <Shell projectId={Number(m.project)}>
+        <Transaction key={`${m.project} ${query.get("op")} ${query.get("name")}`} projectId={Number(m.project)} />
+      </Shell>
+    );
+  }
+  if ((m = match("/p/:project/performance", path))) {
+    return (
+      <Shell projectId={Number(m.project)}>
+        <Performance key={m.project} projectId={Number(m.project)} />
       </Shell>
     );
   }
