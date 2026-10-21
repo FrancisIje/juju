@@ -5,6 +5,44 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/client.dart';
 
+/// Keeps the anonymous id in a small JSON file next to the queue, so one
+/// install stays one person across launches.
+class FileIdentityStorage implements IdentityStorage {
+  FileIdentityStorage({Future<Directory> Function()? directory}) : _directory = directory ?? getApplicationSupportDirectory;
+
+  final Future<Directory> Function() _directory;
+
+  Future<File> get _file async {
+    final dir = await _directory();
+    await dir.create(recursive: true);
+    return File('${dir.path}/juju_identity.json');
+  }
+
+  @override
+  Future<Map<String, String>> load() async {
+    final file = await _file;
+    if (!await file.exists()) return {};
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return {};
+      return {
+        for (final e in decoded.entries)
+          if (e.value is String) e.key.toString(): e.value as String
+      };
+    } on FormatException {
+      return {};
+    }
+  }
+
+  @override
+  Future<void> save(Map<String, String> ids) async {
+    final file = await _file;
+    final tmp = File('${file.path}.tmp');
+    await tmp.writeAsString(jsonEncode(ids), flush: true);
+    await tmp.rename(file.path); // atomic, like the queue file
+  }
+}
+
 /// Keeps the event queue in a JSON file in the app's private support
 /// folder, so events survive the app being killed.
 class FileQueueStorage implements QueueStorage {

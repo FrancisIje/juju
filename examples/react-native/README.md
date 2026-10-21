@@ -21,7 +21,9 @@ After changing the SDK, run `make example-rn-deps` again.
 
 ## Automated runs
 
-At launch the app asks `http://localhost:8098/config.json` for `{"dsn": "...", "scenario": "none" | "nonfatal" | "crash"}`.
+At launch the app asks `http://localhost:8098/config.json` for `{"dsn": "...", "scenario": "none" | "nonfatal" | "crash" | "analytics"}`.
+`analytics` sends a known set of product analytics events (2 `checkout_started`, one before and one after
+`identify("rn_user_1")`), so a chart can be checked against exactly what was sent.
 Serving that file from any folder (`python3 -m http.server 8098`) lets a script crash the app on one launch and
 reopen it normally on the next, without tapping the screen. See the `/verify` skill.
 

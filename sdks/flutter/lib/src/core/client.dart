@@ -15,6 +15,13 @@ abstract class QueueStorage {
   Future<void> save(List<JsonMap> events);
 }
 
+/// Where the anonymous id (and the user id after identify) is kept between
+/// launches, so one install stays one person.
+abstract class IdentityStorage {
+  Future<Map<String, String>> load();
+  Future<void> save(Map<String, String> ids);
+}
+
 class ClientOptions {
   ClientOptions({
     required this.dsn,
@@ -25,12 +32,14 @@ class ClientOptions {
     this.sdkVersion = jujuVersion,
     this.transport,
     this.storage,
+    this.identityStorage,
     this.isInApp,
     this.context,
     this.beforeSend,
     this.flushInterval = const Duration(seconds: 5),
     this.maxBatchSize = 20,
     this.maxQueueSize = 100,
+    this.maxAnalyticsQueueSize = 1000,
     this.maxBreadcrumbs = 100,
     this.debug = false,
     this.log,
@@ -45,6 +54,7 @@ class ClientOptions {
   final String sdkVersion;
   final Transport? transport;
   final QueueStorage? storage;
+  final IdentityStorage? identityStorage;
   final InAppFn? isInApp;
 
   /// Extra context attached to every event (device, OS, runtime).
@@ -55,8 +65,12 @@ class ClientOptions {
   final Duration flushInterval;
   final int maxBatchSize;
 
-  /// Events kept while offline. New events past this are dropped.
+  /// Errors kept while offline. New ones past this are dropped.
   final int maxQueueSize;
+
+  /// Analytics events kept while offline, counted apart from errors so a
+  /// burst of tracking can never push a crash report out.
+  final int maxAnalyticsQueueSize;
   final int maxBreadcrumbs;
   final bool debug;
   final void Function(String message)? log;
@@ -85,6 +99,7 @@ class JujuClient {
     // the report we're about to read back.
     ready = _loadSaved();
     _persistChain = ready;
+    _identityChain = _loadIdentity();
   }
 
   final ClientOptions options;
@@ -106,6 +121,14 @@ class JujuClient {
   final Map<String, String> _tags = {};
   bool _closed = false;
   late Future<void> _persistChain;
+
+  // Who analytics events are from: the anonymous id of this install until
+  // identify(), then the user id. capture/identify/reset run in call order
+  // on _identityChain, after the stored ids have loaded, so the first events
+  // after launch use the stored id, not a new one.
+  String _anonId = '';
+  String _distinctId = '';
+  late Future<void> _identityChain;
   bool _saveQueued = false;
 
   // The same error object can reach us twice (reported with
@@ -144,6 +167,104 @@ class JujuClient {
   }
 
   void setUser(JsonMap? user) => _user = user;
+
+  /// Records something a user did: capture('checkout_started', {'plan': 'pro'}).
+  /// Never throws.
+  void capture(String name, [JsonMap? properties]) {
+    try {
+      if (_closed || name.trim().isEmpty) return;
+      final base = _analyticsBase(); // stamped now: the time it happened
+      final props = properties == null ? null : JsonMap.of(properties);
+      _afterIdentity(() {
+        _enqueue({
+          ...base,
+          'type': 'event',
+          'name': name,
+          'distinct_id': _distinctId,
+          if (props != null && props.isNotEmpty) 'properties': props,
+        });
+      });
+    } catch (e) {
+      _log('could not capture event: $e');
+    }
+  }
+
+  /// After login: events from this install so far and from now on belong to
+  /// [userId]. Also sets the user on error reports, unless setUser did.
+  void identify(String userId) {
+    try {
+      if (_closed || userId.trim().isEmpty) return;
+      final base = _analyticsBase();
+      _user ??= {'id': userId};
+      _afterIdentity(() {
+        if (userId == _distinctId) return; // already this user
+        // Link the anonymous history only while still anonymous: switching
+        // accounts on a shared device starts fresh instead of merging people.
+        final wasAnonymous = _distinctId == _anonId;
+        _enqueue({...base, 'type': 'identify', 'distinct_id': userId, if (wasAnonymous) 'anon_id': _anonId});
+        _distinctId = userId;
+        _saveIdentity();
+      });
+    } catch (e) {
+      _log('could not identify: $e');
+    }
+  }
+
+  /// After logout: a new anonymous id, so the next person isn't counted as this one.
+  void reset() {
+    _user = null;
+    _afterIdentity(() {
+      _anonId = uuid4(options.random);
+      _distinctId = _anonId;
+      _saveIdentity();
+    });
+  }
+
+  /// Who events are sent as, once the stored id has loaded.
+  Future<String> get distinctId async {
+    await _identityChain;
+    return _distinctId;
+  }
+
+  JsonMap _analyticsBase() {
+    final context = options.context?.call();
+    return {
+      'event_id': uuid4(options.random),
+      'timestamp': clock.now().toUtc().toIso8601String(),
+      'platform': options.platform,
+      if (options.release != null) 'release': options.release,
+      if (options.environment != null) 'environment': options.environment,
+      // Device context makes breakdowns by OS work.
+      if (context != null && context.isNotEmpty) 'context': context,
+    };
+  }
+
+  void _afterIdentity(void Function() fn) {
+    _identityChain = _identityChain.then((_) => fn()).catchError((Object e) => _log('analytics: $e'));
+  }
+
+  Future<void> _loadIdentity() async {
+    Map<String, String> ids = const {};
+    try {
+      ids = await options.identityStorage?.load() ?? const {};
+    } catch (e) {
+      _log('could not read the stored id: $e');
+    }
+    _anonId = ids['anon_id'] ?? '';
+    if (_anonId.isEmpty) _anonId = uuid4(options.random);
+    _distinctId = ids['distinct_id'] ?? '';
+    if (_distinctId.isEmpty) _distinctId = _anonId;
+    if (ids['anon_id'] == null) await _saveIdentity();
+  }
+
+  Future<void> _saveIdentity() async {
+    try {
+      await options.identityStorage?.save({'anon_id': _anonId, 'distinct_id': _distinctId});
+    } catch (e) {
+      _log('could not store the id: $e'); // lasts for this run, which still counts correctly
+    }
+  }
+
   void setTag(String key, String value) => _tags[key] = value;
 
   /// Sends everything queued now. Only one send runs at a time.
@@ -212,10 +333,13 @@ class JujuClient {
   }
 
   bool _enqueue(JsonMap event) {
-    if (_queue.length >= options.maxQueueSize) {
+    final analytics = event['type'] != 'error';
+    final sameKind = _queue.where((e) => (e['type'] != 'error') == analytics).length;
+    final limit = analytics ? options.maxAnalyticsQueueSize : options.maxQueueSize;
+    if (sameKind >= limit) {
       // Drop the newest: an overflowing queue is usually a loop repeating
-      // the same error, and the first ones are the most likely to show the cause.
-      _log('queue full (${options.maxQueueSize}), dropping event');
+      // the same thing, and the first ones are the most likely to show the cause.
+      _log('queue full ($limit ${analytics ? 'analytics events' : 'errors'}), dropping event');
       return false;
     }
     _queue.add(event);

@@ -63,10 +63,16 @@ func validateRequired(e *Event) ValidationError {
 		e.EventID = u.String() // canonical lowercase form, so dedupe matches regardless of case
 	}
 
-	if e.Type != "error" {
-		errs = append(errs, FieldError{"type", fmt.Sprintf("%q is not supported (expected \"error\")", e.Type)})
-	} else if e.Exception == nil || (strings.TrimSpace(e.Exception.Type) == "" && strings.TrimSpace(e.Exception.Message) == "") {
-		errs = append(errs, FieldError{"exception", "needs a type or a message"})
+	switch e.Type {
+	case TypeError:
+		e.Name, e.DistinctID, e.AnonID, e.Properties = "", "", "", nil
+		if e.Exception == nil || (strings.TrimSpace(e.Exception.Type) == "" && strings.TrimSpace(e.Exception.Message) == "") {
+			errs = append(errs, FieldError{"exception", "needs a type or a message"})
+		}
+	case TypeEvent, TypeIdentify:
+		errs = append(errs, validateAnalytics(e)...)
+	default:
+		errs = append(errs, FieldError{"type", fmt.Sprintf("%q is not supported (expected error, event or identify)", e.Type)})
 	}
 	return errs
 }
@@ -105,6 +111,10 @@ func (e *Event) repairFields() {
 	e.Environment = e.truncate("environment", e.Environment, maxEnvironment)
 	e.Release = e.truncate("release", e.Release, maxRelease)
 
+	if e.Exception == nil { // analytics: no stack, crumbs or tags to repair
+		e.repairAnalytics()
+		return
+	}
 	ex := e.Exception
 	ex.Type = e.truncate("exception.type", ex.Type, maxTypeBytes)
 	ex.Message = e.truncate("exception.message", ex.Message, maxMessageBytes)

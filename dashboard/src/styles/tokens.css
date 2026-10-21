@@ -38,6 +38,18 @@
   --blue: #54a2ff;
   --blue-soft: rgba(84, 162, 255, 0.14);
 
+  /* Chart series, in order. Distinct hues that hold up on dark surfaces;
+     the first is the brand violet. Always paired with a legend label. */
+  --chart-1: #a284ff;
+  --chart-2: #54d0ff;
+  --chart-3: #fac800;
+  --chart-4: #05df72;
+  --chart-5: #ff6568;
+  --chart-6: #ff8bd1;
+  --chart-7: #ff9d4d;
+  --chart-8: #7ce8d0;
+  --chart-9: #c7c7cf;
+  --chart-10: #8f9bff;
   /* Pixel-art palette, for the login screen and empty states only. */
   --pixel-1: #a284ff;
   --pixel-2: #fac800;
@@ -94,6 +106,16 @@
     --blue-soft: rgba(17, 94, 243, 0.08);
     --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.18);
     --scrim: rgba(0, 0, 0, 0.3);
+    --chart-1: #6c3dff;
+    --chart-2: #0284c7;
+    --chart-3: #b45309;
+    --chart-4: #047857;
+    --chart-5: #d1000f;
+    --chart-6: #be185d;
+    --chart-7: #c2410c;
+    --chart-8: #0f766e;
+    --chart-9: #52525b;
+    --chart-10: #4338ca;
   }
 }
 
@@ -124,4 +146,14 @@
   --blue-soft: rgba(17, 94, 243, 0.08);
   --shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.18);
   --scrim: rgba(0, 0, 0, 0.3);
+  --chart-1: #6c3dff;
+  --chart-2: #0284c7;
+  --chart-3: #b45309;
+  --chart-4: #047857;
+  --chart-5: #d1000f;
+  --chart-6: #be185d;
+  --chart-7: #c2410c;
+  --chart-8: #0f766e;
+  --chart-9: #52525b;
+  --chart-10: #4338ca;
 }

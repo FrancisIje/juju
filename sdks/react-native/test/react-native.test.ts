@@ -1,4 +1,4 @@
-import type { Envelope, JujuEvent, SendResult, Transport } from "@juju/core";
+import type { AnalyticsEvent, Envelope, JujuEvent, SendResult, Transport } from "@juju/core";
 import { Client } from "@juju/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deviceContext, isInApp } from "../src/context";
@@ -233,5 +233,28 @@ describe("isInApp", () => {
     ["http://localhost:8081/node_modules/react-native/Libraries/x.js", false],
   ])("%s → %s", (file, want) => {
     expect(isInApp(file)).toBe(want);
+  });
+});
+
+describe("analytics", () => {
+  it("captures events with device context, and keeps one id per install in AsyncStorage", async () => {
+    const { storage, data } = fakeAsyncStorage();
+    juju.init({ dsn: DSN, transport, storage });
+    juju.capture("checkout_started", { plan: "pro" });
+    await juju.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    await juju.flush();
+    const e = sent.flatMap((env) => env.events).find((x) => x.type === "event") as AnalyticsEvent;
+    expect(e).toMatchObject({ name: "checkout_started", properties: { plan: "pro" }, context: { os: { name: Platform.OS } } });
+    expect(data.get("juju.anon_id")).toBe(e.distinct_id);
+
+    // A relaunch (new init, same storage) is the same person.
+    juju.close();
+    sent = [];
+    juju.init({ dsn: DSN, transport, storage });
+    juju.identify("user_42");
+    await new Promise((r) => setTimeout(r, 0));
+    await juju.flush();
+    expect(sent.flatMap((env) => env.events)).toContainEqual(expect.objectContaining({ type: "identify", distinct_id: "user_42", anon_id: e.distinct_id }));
   });
 });

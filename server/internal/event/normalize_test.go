@@ -67,7 +67,7 @@ func TestNormalizeRejects(t *testing.T) {
 		{"missing event_id", with(func(m map[string]any) { delete(m, "event_id") }), "event_id"},
 		{"event_id not a uuid", with(func(m map[string]any) { m["event_id"] = "abc" }), "event_id"},
 		{"nil uuid", with(func(m map[string]any) { m["event_id"] = "00000000-0000-0000-0000-000000000000" }), "event_id"},
-		{"unknown type", with(func(m map[string]any) { m["type"] = "transaction" }), "type"},
+		{"unknown type", with(func(m map[string]any) { m["type"] = "pageview" }), "type"},
 		{"missing exception", with(func(m map[string]any) { delete(m, "exception") }), "exception"},
 		{"exception without type or message", with(func(m map[string]any) {
 			m["exception"] = map[string]any{"type": " ", "message": ""}
@@ -283,16 +283,31 @@ func FuzzNormalize(f *testing.F) {
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`null`))
 	f.Add([]byte(`{"event_id":"` + validID + `","type":"error","exception":{"message":"x"},"tags":{"":""}}`))
+	f.Add([]byte(`{"event_id":"` + validID + `","type":"event","name":"signup","distinct_id":"a","properties":{"n":1,"o":{"x":[1,null]},"":true}}`))
+	f.Add([]byte(`{"event_id":"` + validID + `","type":"identify","distinct_id":"u1","anon_id":"a"}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		e, err := Normalize(raw, now)
 		if err != nil {
 			return
 		}
-		if len(e.Exception.Message) > maxMessageBytes || len(e.Tags) > maxTags || len(e.Breadcrumbs) > maxBreadcrumbs {
-			t.Fatalf("limits not enforced: %+v", e)
-		}
-		if st := e.Exception.Stacktrace; st != nil && len(st.Frames) > maxFrames {
-			t.Fatalf("%d frames", len(st.Frames))
+		if e.IsAnalytics() {
+			// Analytics: someone did it, nothing that could become an issue,
+			// and every property is short text.
+			if e.DistinctID == "" || e.Exception != nil || len(e.Properties) > maxProperties {
+				t.Fatalf("analytics rules not enforced: %+v", e)
+			}
+			for k, v := range e.Properties {
+				if s, ok := v.(string); !ok || len(s) > maxPropertyValue || len(k) > maxPropertyKey {
+					t.Fatalf("property %q = %#v", k, v)
+				}
+			}
+		} else {
+			if len(e.Exception.Message) > maxMessageBytes || len(e.Tags) > maxTags || len(e.Breadcrumbs) > maxBreadcrumbs {
+				t.Fatalf("limits not enforced: %+v", e)
+			}
+			if st := e.Exception.Stacktrace; st != nil && len(st.Frames) > maxFrames {
+				t.Fatalf("%d frames", len(st.Frames))
+			}
 		}
 		if _, err := time.Parse(time.RFC3339Nano, e.Timestamp); err != nil {
 			t.Fatalf("stored timestamp %q does not parse", e.Timestamp)

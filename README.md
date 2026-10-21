@@ -10,6 +10,10 @@ make devdb          # terminal 1: Postgres without Docker (or `make db` if you h
 make dev            # terminal 2: the server on :8080
 ```
 
+For product analytics, also run `make devch` (ClickHouse without Docker; it downloads a pinned build
+once) and start the server with `JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123 make dev`. Without it,
+error tracking works as usual and the Analytics page says how to turn it on.
+
 Create a project and send an error:
 
 ```bash
@@ -109,6 +113,29 @@ void main() => Juju.runZoned(() async {
 Catches framework errors (`FlutterError.onError`), async errors (`PlatformDispatcher.onError`) and zone errors,
 and keeps unsent events in a file so they survive the app being killed. Example app: [examples/flutter](examples/flutter).
 
+## Product analytics
+
+Count what people do in your apps, with the same SDKs and DSN as error tracking:
+
+```js
+juju.capture("checkout_started", { plan: "pro", items: 3 }); // web and React Native
+juju.identify(user.id);                                    // after login
+juju.reset();                                              // after logout
+```
+```dart
+Juju.capture('checkout_started', {'plan': 'pro', 'items': 3}); // Flutter
+Juju.identify(user.id);
+Juju.reset();
+```
+
+Until `identify`, events count by an anonymous id kept on the device (localStorage, AsyncStorage, a
+file). `identify` links that id to the user, so their events before and after logging in count as
+one person; `reset` starts a new anonymous id for the next person. The dashboard's **Analytics** page
+has trends (by platform, OS, browser, release or any property), funnels and retention.
+
+Events are stored in ClickHouse (`JUJU_CLICKHOUSE_URL`), a column database that keeps "count these
+over time" fast at analytics volumes. Postgres keeps everything else.
+
 ## Symbolication
 
 Upload debug files after each release build, so stack traces show your original source:
@@ -129,7 +156,7 @@ minified, the event's `symbolication.notes` say what's missing.
 make sdk-test          # JavaScript SDK tests
 make flutter-test      # Flutter SDK: format, analyze, tests
 make test              # gofmt, go vet, unit tests with -race
-make test-integration  # also runs against a real (embedded) Postgres
+make test-integration  # also runs against a real (embedded) Postgres and ClickHouse
 make fuzz              # fuzz the event parser for 30s
 make dashboard-test    # dashboard: type-check and unit tests
 ```
@@ -143,7 +170,7 @@ In Claude Code, run `/verify` after any change: it writes tests and checks the c
 ```
 server/
   cmd/juju/            the binary: serve, migrate, project create, user create, upload
-  cmd/devdb/           local Postgres without Docker
+  cmd/devdb/           local Postgres without Docker (-port for a second checkout)
   internal/event/      v1 wire format, validation and repair rules
   internal/fingerprint grouping events into issues
   internal/ingest/     POST /api/v1/projects/{id}/events
@@ -158,6 +185,10 @@ server/
   internal/ui/         /api/ui: what the dashboard calls (session cookie)
   internal/alert/      Slack and email alerts for new issues and regressions
   internal/web/        serves the embedded dashboard build
+  internal/analytics/  ClickHouse: batched writes, trends, funnels, retention
+  internal/live/       server-sent events that refresh open dashboards
+  internal/testch/     starts a real ClickHouse for integration tests
+scripts/devch.sh       pinned ClickHouse for development, tests and CI
 dashboard/             the dashboard: React + Vite, styles in src/styles/tokens.css
 sdks/
   js-core/             @juju/core: events, stack parsing, queue, batching, retry

@@ -39,6 +39,7 @@ import (
 	"juju/internal/queue"
 	"juju/internal/server"
 	"juju/internal/store"
+	"juju/internal/testch"
 	"juju/internal/worker"
 )
 
@@ -68,8 +69,19 @@ func run(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	// ClickHouse too, for the analytics endpoints; on its own ports (the
+	// analytics package's tests use 18123-18126).
+	u, stopCH, err := testch.Start(18133)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer stopCH()
+	chURL = u
 	return m.Run()
 }
+
+var chURL string
 
 // slack records messages posted to a fake incoming webhook.
 type slack struct {
@@ -195,6 +207,13 @@ func TestDashboardFlowEndToEnd(t *testing.T) {
 	defer slackSrv.Close()
 
 	ada := newClient(t, srv.URL)
+
+	// First-run setup needs a server with no accounts. Other tests in this
+	// package share the database and create accounts, and test order isn't
+	// something to rely on, so start from none.
+	if _, err := pool.Exec(context.Background(), "TRUNCATE users CASCADE"); err != nil {
+		t.Fatal(err)
+	}
 
 	// First run: the server has no users, so sign-up is open.
 	var setup map[string]bool

@@ -19,6 +19,20 @@ if ! command -v caddy >/dev/null; then
 	apt-get install -yq caddy
 fi
 
+echo "==> ClickHouse, for product analytics"
+# The same version as development and CI (scripts/devch.sh), from
+# ClickHouse's own signed apt repository.
+CLICKHOUSE_VERSION=26.8.18.2
+if ! dpkg -s clickhouse-server 2>/dev/null | grep -q "^Version: $CLICKHOUSE_VERSION"; then
+	curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor --yes -o /usr/share/keyrings/clickhouse-keyring.gpg
+	echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" > /etc/apt/sources.list.d/clickhouse.list
+	apt-get update -q
+	apt-get install -yq "clickhouse-server=$CLICKHOUSE_VERSION" "clickhouse-client=$CLICKHOUSE_VERSION" "clickhouse-common-static=$CLICKHOUSE_VERSION"
+fi
+install -m 644 clickhouse.xml /etc/clickhouse-server/config.d/juju.xml
+systemctl enable clickhouse-server
+systemctl restart clickhouse-server
+
 echo "==> firewall: only SSH, HTTP and HTTPS are reachable"
 ufw allow OpenSSH
 ufw allow 80/tcp
@@ -44,6 +58,8 @@ JUJU_ADDR=127.0.0.1:8080
 JUJU_DATABASE_URL=postgres://juju@/juju?host=/var/run/postgresql
 JUJU_DATA_DIR=/var/lib/juju
 JUJU_PUBLIC_URL=https://$DOMAIN
+# Product analytics (ClickHouse runs on this server, localhost only).
+JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123
 # Anyone can create an account and their own organization; teams add people
 # with invite links. For a private server, where invite links are the only
 # way in, uncomment this:
@@ -55,6 +71,8 @@ JUJU_PUBLIC_URL=https://$DOMAIN
 #JUJU_SMTP_FROM=juju <alerts@$DOMAIN>
 EOF
 fi
+# Servers set up before analytics existed: turn it on, once.
+grep -q '^#\?JUJU_CLICKHOUSE_URL=' /etc/juju/juju.env || echo 'JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123' >> /etc/juju/juju.env
 # Keep the URL in step with DOMAIN when re-run for a new domain; the rest
 # of the file may hold edits (SMTP) that must survive.
 sed -i "s|^JUJU_PUBLIC_URL=.*|JUJU_PUBLIC_URL=https://$DOMAIN|" /etc/juju/juju.env

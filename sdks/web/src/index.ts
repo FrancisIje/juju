@@ -53,6 +53,7 @@ export function init(options: WebOptions): void {
       page: { url: location.origin + location.pathname },
     }),
     logger: nativeConsole,
+    identityStorage: browserStorage(),
   };
   if (options.release) clientOptions.release = options.release;
   if (options.environment) clientOptions.environment = options.environment;
@@ -70,6 +71,46 @@ export function init(options: WebOptions): void {
   if (crumbs.xhr) uninstallers.push(instrumentXHR(c, isJujuUrl, typeof XMLHttpRequest === "undefined" ? undefined : XMLHttpRequest));
   if (crumbs.clicks) uninstallers.push(instrumentClicks(c));
   if (crumbs.navigation) uninstallers.push(instrumentHistory(c));
+}
+
+/**
+ * Records something a user did, for product analytics:
+ * capture("checkout_started", { plan: "pro" }).
+ */
+export function capture(name: string, properties?: Record<string, unknown>): void {
+  client?.capture(name, properties);
+}
+
+/** After login: events from this device so far, and from now on, belong to userId. */
+export function identify(userId: string): void {
+  client?.identify(userId);
+}
+
+/** After logout: forget the user, so whoever uses the device next is a new person. */
+export function reset(): void {
+  client?.reset();
+}
+
+// localStorage keeps the anonymous id across visits, so one browser is one
+// person. It can throw (private windows, blocked storage): then the id lasts
+// for this page view, which still counts events correctly.
+function browserStorage() {
+  return {
+    getItem: (k: string) => {
+      try {
+        return localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (k: string, v: string) => {
+      try {
+        localStorage.setItem(k, v);
+      } catch {
+        // not kept; fine
+      }
+    },
+  };
 }
 
 /** Report an error the app caught. Returns the event_id, or "" if not sent. */

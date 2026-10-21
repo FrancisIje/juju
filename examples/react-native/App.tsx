@@ -14,7 +14,7 @@ const CONTROL_URL = 'http://localhost:8098/config.json';
 const DSN_KEY = 'juju-example-dsn';
 const RELEASE = 'juju-example@0.1.0+1';
 
-type Config = { dsn: string; scenario?: 'none' | 'crash' | 'nonfatal' };
+type Config = { dsn: string; scenario?: 'none' | 'crash' | 'nonfatal' | 'analytics' };
 
 async function loadConfig(): Promise<Config | null> {
   try {
@@ -49,6 +49,11 @@ const scenarios = {
       juju.captureException(err, { tags: { step: 'parse-config' } });
     }
   },
+  // Product analytics: events, not errors.
+  checkout: () => juju.capture('checkout_started', { plan: 'pro', items: 3 }),
+  completed: () => juju.capture('checkout_completed', { plan: 'pro' }),
+  login: () => juju.identify('rn_user_1'),
+  logout: () => juju.reset(),
   breadcrumbs: async () => {
     console.warn('coupon request is about to fail');
     await fetch('http://localhost:8098/api/coupon?token=never-recorded').catch(() => {});
@@ -74,7 +79,16 @@ export default function App() {
       await juju.ready();
       add(`juju initialised (scenario: ${config.scenario ?? 'none'})`);
 
-      if (config.scenario === 'nonfatal') {
+      if (config.scenario === 'analytics') {
+        // A known set, to check a chart against: 1 checkout_started, an
+        // identify, then 1 more checkout_started after login.
+        scenarios.checkout();
+        scenarios.login();
+        scenarios.checkout();
+        await new Promise((r) => setTimeout(r, 100));
+        await juju.flush();
+        add('analytics scenario sent');
+      } else if (config.scenario === 'nonfatal') {
         await scenarios.breadcrumbs();
         scenarios.captured();
         scenarios.rejection();
@@ -98,6 +112,9 @@ export default function App() {
           <Button title="Unhandled promise rejection" onPress={scenarios.rejection} />
           <Button title="Handled error (captureException)" onPress={() => (scenarios.captured(), add('captured a SyntaxError'))} />
           <Button title="Breadcrumbs (console + fetch)" onPress={() => void scenarios.breadcrumbs().then(() => add('breadcrumbs recorded'))} />
+          <Button title="Start checkout (capture)" onPress={() => (scenarios.checkout(), add('captured checkout_started'))} />
+          <Button title="Log in as rn_user_1 (identify)" onPress={() => (scenarios.login(), add('identified as rn_user_1'))} />
+          <Button title="Log out (reset)" onPress={() => (scenarios.logout(), add('reset: new anonymous id'))} />
           <Button title="Send now" onPress={() => void juju.flush().then(() => add('flushed'))} />
         </View>
         <Text style={styles.log} testID="log">{log.join('\n')}</Text>
