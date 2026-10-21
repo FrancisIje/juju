@@ -76,7 +76,7 @@ jobs:
       # actually reach. A new one fails CI, and so blocks deploys, until the
       # Go version (go.mod) or the module is updated.
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
       # Integration tests start their own embedded Postgres, exactly like on a
       # laptop, so CI and local runs can't drift apart.
       - name: Cache embedded Postgres

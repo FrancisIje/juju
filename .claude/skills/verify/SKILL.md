@@ -175,7 +175,7 @@ Sign-up is open, so treat every account as a possible attacker. Attack the chang
 - **Limits** must key on the client's address from `httpx.ClientIP`, never on the email or project alone: anything keyed on a value the attacker can type lets them lock someone else out. Also check that a forged `X-Forwarded-For` from a direct, non-proxy connection is ignored.
 - **Outward requests** (webhooks, email): a listener on `127.0.0.1` must see zero connections for private IPs, hostnames resolving to them (`127.0.0.1.nip.io`), decimal and hex IPs, and redirects. Sending must be rate limited.
 - **XSS**: send HTML and `javascript:` URLs in every event field, open the pages in real Chrome, and check for dialogs, CSP violations and injected elements.
-- `go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...` (CI runs it) and `npm audit --omit=dev`.
+- `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` (CI runs it) and `npm audit --omit=dev`.
 
 ### Analytics changes
 - Run ClickHouse with `make devch` (or `scripts/devch.sh <dir>`; a pinned, checksum-checked build) and start juju with `JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123`. The log must say `analytics on`.
