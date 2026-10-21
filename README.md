@@ -71,6 +71,10 @@ ssh root@SERVER_IP juju-admin user create -email you@example.com -org Acme   # o
 JUJU_URL=https://juju.example.com JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_... deploy/deploy.sh demo root@SERVER_IP
 ```
 
+After `deploy/deploy.sh ci-key root@SERVER_IP` (once), **main is the production branch**: every pull
+request merged into main runs the full CI on GitHub Actions and then deploys that commit. If a check
+fails, nothing is deployed. To redeploy without a new commit, use "Run workflow" on the Deploy action.
+
 Config lives in `/etc/juju/juju.env` (SMTP for email alerts), logs in `journalctl -u juju`, and
 `/etc/cron.daily/juju-backup` dumps the database daily. Run `deploy/deploy.sh release` again for
 each update: migrations apply on start.

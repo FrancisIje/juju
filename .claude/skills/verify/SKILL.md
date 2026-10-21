@@ -253,7 +253,7 @@ When the checks pass and every fix has its before/after run, ship the work as a 
 3. **Commit** with a message that says what changed and why, in a few lines.
 4. **Push the branch**: `git push -u origin <branch>`. Never push to `main`, and never force-push.
 5. **Open the PR** to `main`: `gh pr create --base main --head <branch> --title "<short summary>" --body-file <file>`. The body follows Step 7's report: what changed and why, tests added, automated checks, **manual verification (before and after for each fix)**, and what wasn't verified.
-6. **Wait for CI** (`gh pr checks <number> --watch`). If a check fails, read the log (`gh run view --log-failed`), fix it on the same branch, push again, and say what failed. Don't merge the PR yourself; the user does that after reviewing.
+6. **Wait for CI** (`gh pr checks <number> --watch`). Remember that main is the production branch: **merging deploys to the live server**, so say in the PR what the merge will ship (including anything already on main that isn't deployed yet) and anything the server needs first (a re-run of `deploy/deploy.sh setup`, a new env var). If a check fails, read the log (`gh run view --log-failed`), fix it on the same branch, push again, and say what failed. Don't merge the PR yourself; the user does that after reviewing.
 If there's no git remote, or `gh` isn't logged in (`gh auth status`), stop at the local branch and tell the user what's needed.
 
 ## Step 7: Report back
