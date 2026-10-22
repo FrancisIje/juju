@@ -333,3 +333,23 @@ func fakeSMTP(t *testing.T) (string, func() []string) {
 		return append([]string(nil), mails...)
 	}
 }
+
+// Anyone can sign up and send errors to their own project, so a project
+// can't make the server send without end: 30 alerts an hour, then nothing
+// until the hour has passed. Another project has its own allowance.
+func TestAlertsPerProjectAreCapped(t *testing.T) {
+	srv, received := slackServer(t, 200)
+	s := &fakeSettings{settings: store.AlertSettings{SlackWebhookURL: srv.URL, OnNewIssue: true, OnRegression: true}}
+	n := notifier(s)
+	n.Start(1)
+	for i := 0; i < MaxAlertsPerHour+20; i++ {
+		n.IssueEvent(regression()) // project 7
+	}
+	e, fp, res := regression()
+	e.ProjectID = 8
+	n.IssueEvent(e, fp, res)
+	n.Stop()
+	if got := len(received()); got != MaxAlertsPerHour+1 {
+		t.Errorf("slack got %d messages, want %d for project 7 and 1 for project 8", got, MaxAlertsPerHour+1)
+	}
+}

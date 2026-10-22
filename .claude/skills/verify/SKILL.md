@@ -169,6 +169,14 @@ Always try the unhappy paths by hand too: wrong key, the same event twice (does 
 - PII: send an event with an email, a `?token=` URL and an `Authorization` header, then check the stored payload **and** the queue's files on disk (`grep -r -a` in `JUJU_DATA_DIR/queue`, while Postgres is stopped so the event stays queued). Scrubbing must happen before the queue.
 - Limits: `juju project limits` on a test project, then send bursts: `429` with a `Retry-After` the SDKs can obey, and usage that survives a restart.
 
+### Security-sensitive changes (auth, limits, anything that sends requests or mail)
+Sign-up is open, so treat every account as a possible attacker. Attack the change by hand with two accounts in two organizations, through a client that sends `X-Forwarded-For` from `127.0.0.1` the way Caddy does:
+- **Authorization**: the other account's ids in every path, and your own project in the path with *their* issue, event or invite id in it. Every one must be 404, or 200 with nothing of theirs in it.
+- **Limits** must key on the client's address from `httpx.ClientIP`, never on the email or project alone: anything keyed on a value the attacker can type lets them lock someone else out. Also check that a forged `X-Forwarded-For` from a direct, non-proxy connection is ignored.
+- **Outward requests** (webhooks, email): a listener on `127.0.0.1` must see zero connections for private IPs, hostnames resolving to them (`127.0.0.1.nip.io`), decimal and hex IPs, and redirects. Sending must be rate limited.
+- **XSS**: send HTML and `javascript:` URLs in every event field, open the pages in real Chrome, and check for dialogs, CSP violations and injected elements.
+- `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...` (CI runs it) and `npm audit --omit=dev`.
+
 ### Analytics changes
 - Run ClickHouse with `make devch` (or `scripts/devch.sh <dir>`; a pinned, checksum-checked build) and start juju with `JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123`. The log must say `analytics on`.
 - Send events the way each SDK does: the web example's `#analytics-selftest`, and the Flutter and React Native examples' `analytics` scenario (control server on 8098, release builds on the emulator). Each sends a known set, so the numbers can be checked exactly.

@@ -8,9 +8,12 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
+
+	"juju/internal/httpx"
 )
 
 type Config struct {
@@ -29,6 +32,12 @@ type Config struct {
 	// projects without their own limit (juju project limits). 0 turns the
 	// default off. Default 1000, with bursts of 5 seconds' worth.
 	RateLimit int
+	// JUJU_TRUSTED_PROXIES: reverse proxies whose X-Forwarded-For header is
+	// believed, as addresses or CIDR ranges. Default: this machine
+	// (127.0.0.1, ::1), which is Caddy in the standard deploy. Without it,
+	// every visitor looks like the proxy, and per-address login limits
+	// become one limit shared by everyone.
+	TrustedProxies []netip.Prefix
 	// JUJU_SCRUB_PII=false keeps emails, URL tokens and the like that
 	// apps send by accident (see event.Scrub). Scrubbing is on by default,
 	// so the field is named for turning it off: the zero value is safe.
@@ -97,6 +106,9 @@ func Load() (Config, error) {
 	c.KeepPII = isOff(getenv("JUJU_SCRUB_PII", "true"))
 	if c.RateLimit, err = getint("JUJU_RATE_LIMIT", 1000); err != nil {
 		return c, err
+	}
+	if c.TrustedProxies, err = httpx.ParsePrefixes(getenv("JUJU_TRUSTED_PROXIES", "127.0.0.1,::1")); err != nil {
+		return c, fmt.Errorf("JUJU_TRUSTED_PROXIES: %w", err)
 	}
 	if c.RetentionDays, err = getint("JUJU_RETENTION_DAYS", 90); err != nil {
 		return c, err

@@ -39,6 +39,23 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 
+echo "==> ssh: keys only"
+# Bots try passwords on every server on the internet all day; a key can't
+# be guessed. OpenSSH allows passwords by default, even when no account
+# has one yet. Turned off only once a key is installed, so this can't lock
+# you out. OpenSSH uses the first value it reads, and some cloud images
+# ship a 50-cloud-init.conf that turns passwords on, so this file's name
+# sorts before it.
+if [ -s /root/.ssh/authorized_keys ]; then
+	install -d -m 755 /etc/ssh/sshd_config.d
+	cat > /etc/ssh/sshd_config.d/10-juju.conf <<'EOF'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+EOF
+	sshd -t && systemctl reload ssh
+fi
+
 echo "==> juju user and database"
 id juju >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin juju
 # The Postgres role has the same name as the Linux user, so juju logs in over
@@ -74,6 +91,7 @@ JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123
 #JUJU_RETENTION_DAYS=90            # error events, sessions, transactions; 0 = keep
 #JUJU_ANALYTICS_RETENTION_DAYS=365 # ClickHouse analytics events; 0 = keep
 #JUJU_SCRUB_PII=true               # remove emails, URL tokens etc. at ingest
+#JUJU_TRUSTED_PROXIES=127.0.0.1,::1 # proxies whose X-Forwarded-For is believed (Caddy)
 # The event queue is embedded and kept in JUJU_DATA_DIR/queue (max 1 GB).
 #JUJU_QUEUE_MAX_MB=1024
 EOF

@@ -169,6 +169,9 @@ doesn't stop ingest either: events wait in the queue until Postgres is back.
 | `JUJU_ANALYTICS_RETENTION_DAYS` | `365` | ClickHouse table TTL; `0` keeps them |
 | `JUJU_SCRUB_PII` | `true` | removes emails, URL tokens, Bearer/Basic credentials, JWTs and values under keys like `password` at ingest, before anything is written; `user.*` and `distinct_id` are kept |
 | `JUJU_QUEUE_MAX_MB` | `1024` | queue size on disk; past it, `429` |
+| `JUJU_TRUSTED_PROXIES` | `127.0.0.1,::1` | reverse proxies whose `X-Forwarded-For` is believed; set it if your proxy isn't on the same machine, or every visitor shares the proxy's login and sign-up limits |
+
+Security model and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 
 Per-project limits: `juju project limits -id 1 -rate 500 -quota 5000000` (`-rate default`,
 `-quota none` to clear; running servers pick changes up within 30 s). SDKs can send a share of

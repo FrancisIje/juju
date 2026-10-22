@@ -7,10 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/mail"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"juju/internal/auth"
 	"juju/internal/httpx"
 	"juju/internal/live"
+	"juju/internal/ratelimit"
 	"juju/internal/store"
 )
 
@@ -34,10 +36,24 @@ type API struct {
 	Analytics   *analytics.Client // optional: nil when ClickHouse isn't configured
 	PublicURL   string            // used to build DSNs, e.g. https://juju.example.com
 	AllowSignup bool              // can anyone create an account and organization? (the first account always can)
-	Log         *slog.Logger
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For is
+	// believed (see httpx.ClientIP).
+	TrustedProxies []netip.Prefix
+	Log            *slog.Logger
+
+	// With sign-up open to anyone, these stop one person from making the
+	// server do expensive or outward-facing work without end: sign-ups
+	// (each one a slow password hash, an account and an organization) per
+	// address, and test alerts (emails and webhooks to addresses the user
+	// typed) per project.
+	signups    ratelimit.Window
+	alertTests ratelimit.Window
 }
 
 func (a *API) Register(mux *http.ServeMux) {
+	a.signups.Max, a.signups.Per = 5, time.Hour
+	a.alertTests.Max, a.alertTests.Per = 5, 10*time.Minute
+
 	// Before login.
 	mux.HandleFunc("GET /api/ui/auth/setup", a.setup)
 	mux.Handle("POST /api/ui/auth/signup", auth.RequireCSRF(http.HandlerFunc(a.signup)))
@@ -118,6 +134,10 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	if ip := a.clientIP(r); !a.signups.Allow(ip) {
+		tooMany(w, a.signups.RetryAfter(ip), "too many new accounts from your network")
+		return
+	}
 	n, err := a.Store.CountUsers(r.Context())
 	if err != nil {
 		a.fail(w, "count users", err)
@@ -180,7 +200,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	u, err := a.Auth.Login(r.Context(), w, req.Email, req.Password, clientIP(r))
+	u, err := a.Auth.Login(r.Context(), w, req.Email, req.Password, a.clientIP(r))
 	switch {
 	case errors.Is(err, auth.ErrBadLogin):
 		httpx.WriteError(w, http.StatusUnauthorized, err.Error())
@@ -505,6 +525,10 @@ func (a *API) testAlerts(w http.ResponseWriter, r *http.Request, pid int64, _ st
 		httpx.WriteError(w, http.StatusBadRequest, "add a Slack webhook or an email address first")
 		return
 	}
+	if key := strconv.FormatInt(pid, 10); !a.alertTests.Allow(key) {
+		tooMany(w, a.alertTests.RetryAfter(key), "that's a lot of test alerts")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": a.Alerts.SendTest(r.Context(), pid, s)})
 }
 
@@ -545,12 +569,14 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+func (a *API) clientIP(r *http.Request) string { return httpx.ClientIP(r, a.TrustedProxies) }
+
+// tooMany answers 429 with how long to wait, in the header for programs
+// and in the message for people.
+func tooMany(w http.ResponseWriter, wait time.Duration, why string) {
+	mins := max(1, int((wait+time.Minute-1)/time.Minute))
+	w.Header().Set("Retry-After", strconv.Itoa(int((wait+time.Second-1)/time.Second)))
+	httpx.WriteError(w, http.StatusTooManyRequests, fmt.Sprintf("%s; try again in %d minute(s)", why, mins))
 }
 
 func atoi(s string, fallback int) int {

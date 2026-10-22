@@ -18,6 +18,7 @@ import (
 	"net/netip"
 	"net/smtp"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 
 	"juju/internal/event"
 	"juju/internal/fingerprint"
+	"juju/internal/ratelimit"
 	"juju/internal/store"
 )
 
@@ -74,7 +76,19 @@ type Notifier struct {
 	queue chan Alert
 	wg    sync.WaitGroup
 	once  sync.Once
+
+	// At most 30 alerts per project an hour. A bad release creating
+	// hundreds of new issues gets announced, not sent hundreds of times.
+	// And since anyone can sign up and send errors to their own project,
+	// it stops the server being used to mail or post to an address of
+	// their choosing without end. warned logs that once an hour, not per
+	// dropped alert.
+	perProject ratelimit.Window
+	warned     ratelimit.Window
 }
+
+// MaxAlertsPerHour is how many alerts one project can send in an hour.
+const MaxAlertsPerHour = 30
 
 const queueSize = 1000
 
@@ -100,6 +114,8 @@ func (n *Notifier) Stop() {
 func (n *Notifier) init() {
 	n.once.Do(func() {
 		n.queue = make(chan Alert, queueSize)
+		n.perProject.Max, n.perProject.Per = MaxAlertsPerHour, time.Hour
+		n.warned.Max, n.warned.Per = 1, time.Hour
 		if n.HTTP == nil {
 			dialer := &net.Dialer{Timeout: 5 * time.Second}
 			if !n.AllowHTTPWebhooks {
@@ -151,6 +167,12 @@ func (n *Notifier) deliver(ctx context.Context, a Alert) {
 		return
 	}
 	if (a.Kind == NewIssue && !s.OnNewIssue) || (a.Kind == Regression && !s.OnRegression) {
+		return
+	}
+	if key := strconv.FormatInt(a.ProjectID, 10); !n.perProject.Allow(key) {
+		if n.warned.Allow(key) {
+			n.Log.Warn("alert limit reached for this hour; further alerts are not sent", "project_id", a.ProjectID, "limit", MaxAlertsPerHour)
+		}
 		return
 	}
 	issueID := a.IssueID

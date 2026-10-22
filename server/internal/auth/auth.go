@@ -10,12 +10,12 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"juju/internal/httpx"
+	"juju/internal/ratelimit"
 	"juju/internal/store"
 )
 
@@ -73,27 +73,52 @@ type Service struct {
 	// SecureCookies sets the cookie's Secure flag (https only). On for any
 	// https deployment; off only for http://localhost development.
 	SecureCookies bool
-	limiter       limiter
+
+	// Failed logins are limited twice over. Per address and email: someone
+	// guessing one account's password gets 10 tries in 15 minutes. Per
+	// address: someone trying one common password against many accounts
+	// gets 50. Both key on the client's address, never on the email alone,
+	// or anyone could lock a person out of their account by typing their
+	// email with wrong passwords.
+	perAccount ratelimit.Window
+	perAddress ratelimit.Window
+}
+
+func (s *Service) limits() (*ratelimit.Window, *ratelimit.Window) {
+	if s.perAccount.Max == 0 {
+		s.perAccount.Max, s.perAccount.Per = 10, 15*time.Minute
+		s.perAddress.Max, s.perAddress.Per = 50, 15*time.Minute
+	}
+	return &s.perAccount, &s.perAddress
 }
 
 // Login checks the password and starts a session, writing the cookie.
 func (s *Service) Login(ctx context.Context, w http.ResponseWriter, email, password, clientIP string) (store.User, error) {
 	email = NormalizeEmail(email)
-	if !s.limiter.allow(clientIP + "|" + email) {
+	account, address := s.limits()
+	key := clientIP + "|" + email
+	// Checked before the password, so a blocked client can't make the
+	// server do the slow bcrypt work either.
+	if account.Blocked(key) || address.Blocked(clientIP) {
 		return store.User{}, ErrTooManyAttempts
+	}
+	failed := func() (store.User, error) {
+		account.Hit(key)
+		address.Hit(clientIP)
+		return store.User{}, ErrBadLogin
 	}
 	u, hash, err := s.Store.UserByEmail(ctx, email)
 	if errors.Is(err, store.ErrNotFound) {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
-		return store.User{}, ErrBadLogin
+		return failed()
 	}
 	if err != nil {
 		return store.User{}, err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		return store.User{}, ErrBadLogin
+		return failed()
 	}
-	s.limiter.reset(clientIP + "|" + email)
+	account.Reset(key)
 	return u, s.StartSession(ctx, w, u.ID)
 }
 
@@ -214,42 +239,3 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 var ErrTooManyAttempts = errors.New("too many login attempts, wait a few minutes and try again")
-
-// limiter allows 10 failed logins per key in 15 minutes. In memory: fine
-// for one server, and forgetting on restart only helps a legitimate user.
-type limiter struct {
-	mu   sync.Mutex
-	hits map[string][]time.Time
-}
-
-const (
-	maxAttempts = 10
-	window      = 15 * time.Minute
-)
-
-func (l *limiter) allow(key string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.hits == nil {
-		l.hits = map[string][]time.Time{}
-	}
-	now := time.Now()
-	recent := l.hits[key][:0]
-	for _, t := range l.hits[key] {
-		if now.Sub(t) < window {
-			recent = append(recent, t)
-		}
-	}
-	if len(recent) >= maxAttempts {
-		l.hits[key] = recent
-		return false
-	}
-	l.hits[key] = append(recent, now)
-	return true
-}
-
-func (l *limiter) reset(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.hits, key)
-}
