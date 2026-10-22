@@ -35,9 +35,10 @@ lint: ## gofmt + go vet (+ golangci-lint if installed)
 fmt: ## Format all Go code
 	cd server && gofmt -w .
 
-fuzz: ## Fuzz the event parser and the PII scrubber, 30s each
+fuzz: ## Fuzz the event parser, the PII scrubber and the debug id injector, 30s each
 	cd server && go test ./internal/event -run='^$$' -fuzz=FuzzNormalize -fuzztime=30s
 	cd server && go test ./internal/event -run='^$$' -fuzz=FuzzScrub -fuzztime=30s
+	cd server && go test ./internal/debugid -run='^$$' -fuzz=FuzzInject -fuzztime=30s
 
 loadtest: ## k6 against a running server: make loadtest URL=... PROJECT=1 KEY=pk_... [RATE=500 BATCH=10]
 	k6 run -e URL=$(URL) -e PROJECT=$(PROJECT) -e KEY=$(KEY) -e RATE=$(or $(RATE),500) -e BATCH=$(or $(BATCH),10) loadtest/ingest.js
@@ -51,8 +52,9 @@ sdk: ## Install, type-check, test and build the JavaScript SDKs
 sdk-test: ## Run the JavaScript SDK tests
 	cd sdks && npm test
 
-example-web-build: ## Minify the web example's app.js with a source map, like a production build
+example-web-build: ## Minify the web example's app.js with a source map and a debug id, like a production build
 	sdks/node_modules/.bin/esbuild examples/web/app.js --bundle --minify --sourcemap --target=es2020 --outfile=examples/web/dist/app.min.js
+	cd server && go run ./cmd/juju sourcemaps inject ../examples/web/dist
 
 example-web: ## Serve the web example at http://127.0.0.1:5173/examples/web/ (run `make sdk` and `make example-web-build` first)
 	python3 -m http.server 5173 --bind 127.0.0.1

@@ -117,7 +117,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <span class="eyebrow">juju · Phase 5 · Symbolication</span>
     <h1>From <code>u app.min.js:2:713</code> to <code>checkout app.js:44</code></h1>
     <p class="lede">Production apps ship minified JavaScript and obfuscated Dart, so their stack traces point at compressed code, or at bare addresses. Symbolication turns those frames back into the files, lines and functions you wrote, using debug files uploaded at build time.</p>
-    <div class="logline">[phase 5] <b>DONE</b> verified="minified web build, obfuscated Flutter Android release, React Native Android release (Hermes)" grouping="stable across rebuilds"</div>
+    <div class="logline">[phase 5] <b>DONE</b> verified="minified web build, obfuscated Flutter Android release, React Native Android release (Hermes)" grouping="stable across rebuilds" debug_ids="web (Chrome) and React Native Android release: symbolicated though the upload's release didn't match"</div>
   </header>
 
   <section>
@@ -162,7 +162,23 @@ flowchart LR
   <section>
     <span class="eyebrow">JavaScript</span>
     <h2>Source maps: web and React Native</h2>
-    <p>A source map records, for each position in the minified file, the original file and position it came from. Frames are matched to uploaded maps by release and bundle file name (<code>app.min.js</code>, <code>index.android.bundle</code>).</p>
+    <p>A source map records, for each position in the minified file, the original file and position it came from. It only fits the exact bundle it was made with, so the hard part is finding the right one among every build you've uploaded.</p>
+    <div class="block">
+      <h3>Debug ids: each bundle names its own map</h3>
+      <p>Matching by release name means typing the same label in two places, the app's <code>init</code> and the CI upload, with nothing to keep them equal. Real example from the verification: the app sends <code>juju-example@0.1.0+1</code>, CI uploaded the map as <code>juju-example@0.1.0+2</code>, and every frame stayed <code>index.android.bundle:1:438039</code>.</p>
+      <p>So the build now stamps a random id into <strong>both files at once</strong>: a one-line snippet in the bundle, and <code>"debugId"</code> in its map. At run time the snippet records its id under its own stack trace, which says which file it's in, and the SDK sends <code>debug_meta</code> with the id for each file in an error's stack. The server reads the id from the map when it's uploaded, and matches on that. The release name goes back to being a label for people.</p>
+      <div class="panel" style="padding:0">
+        <table>
+          <thead><tr><th></th><th>App sends</th><th>Map uploaded as</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td>By release name</td><td class="mono">juju-example@0.1.0+1</td><td class="mono">juju-example@0.1.0+2</td><td class="mono">rejection index.android.bundle:1:438039 · missing</td></tr>
+            <tr><td>By debug id</td><td class="mono">juju-example@0.1.0+1, id 43f92dbb…</td><td class="mono">(no release) id 43f92dbb…</td><td class="mono">rejection App.tsx:43:29 · symbolicated</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="why"><span class="label">Why React Native needs a Metro plugin</span>Release builds compile the bundle to Hermes bytecode, which can't be edited afterwards. <code>withJujuConfig</code> adds the snippet as a tiny generated file while Metro bundles. Its source, id included, survives Hermes into the composed map the build writes, which is where the server finds it. Nothing to run before or after the build.</div>
+      <div class="why"><span class="label">Why the old way still works</span>Maps uploaded with <code>-release</code> are also stored that way, and a frame whose id has no map falls back to release and file name. Old SDKs, and bundles that weren't stamped, keep working.</div>
+    </div>
     <div class="block">
       <h3>Columns are counted differently</h3>
       <p>Browsers and Hermes report columns starting at 1; source maps count from 0. Off by one usually still lands inside the same token, which hides the bug, so a test uses a map where neighbouring columns come from different lines.</p>
@@ -208,17 +224,21 @@ flowchart LR
     <h2>Upload after each release build</h2>
 <pre class="code">export JUJU_URL=https://juju.example.com JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_...
 
-<span class="c"># web: the *.map files next to your bundles</span>
-juju upload -kind sourcemap -release <span class="hl">web@2.3.1</span> dist/
+<span class="c"># web: after the build, before deploying: give each bundle a debug id, then upload</span>
+juju sourcemaps inject dist/
+juju upload dist/
 
-<span class="c"># React Native (Android): the composed Hermes map from the release build</span>
-juju upload -kind sourcemap -release <span class="hl">shop@1.4.0+12</span> \
-  android/app/build/generated/sourcemaps/react/release/index.android.bundle.map
+<span class="c"># React Native: once, in metro.config.js</span>
+const { withJujuConfig } = require("@juju/react-native/metro");
+module.exports = withJujuConfig(mergeConfig(getDefaultConfig(__dirname), config));
+<span class="c"># then after each release build (Android), the composed Hermes map</span>
+juju upload android/app/build/generated/sourcemaps/react/release/index.android.bundle.map
 
 <span class="c"># Flutter: flutter build apk --release --obfuscate --split-debug-info=build/symbols</span>
 juju upload -kind dart_symbols build/symbols/</pre>
     <ul>
-      <li><strong>The release must match</strong> what the SDK sends. Dart symbols are matched by build id instead, which the server reads from the file.</li>
+      <li><strong>Deploy the stamped bundles.</strong> <code>inject</code> changes your <code>.js</code> files; the ones users load must be those. Running it twice changes nothing.</li>
+      <li><strong>Without debug ids</strong>, <code>-release</code> is still accepted and must match what the SDK sends. Dart symbols were always matched by build id, read from the file.</li>
       <li><strong>The secret key is required</strong>: these files contain your source code.</li>
       <li><strong>Upload before the release ships.</strong> Events that arrive before their file aren't reprocessed later.</li>
     </ul>
@@ -234,6 +254,8 @@ juju upload -kind dart_symbols build/symbols/</pre>
           <tr><td>Web, minified (Chrome)</td><td class="mono">u app.min.js:2:713, note names the missing map</td><td class="mono">checkout app.js:44:78</td></tr>
           <tr><td>Flutter, obfuscated Android release</td><td class="mono">+0xbc357 addresses, note names build id b718850940…</td><td class="mono">checkout main.dart:56:77, all frames, status symbolicated</td></tr>
           <tr><td>React Native, Android release (Hermes)</td><td class="mono">index.android.bundle:1:436611</td><td class="mono">rejection App.tsx:43:29; Babel helpers not app code</td></tr>
+          <tr><td>Web, debug id (Chrome)</td><td class="mono">main, map uploaded as example@0.1.0+42, app sends example@0.1.0: 3 errors, all u app.min.js:2:713, missing</td><td class="mono">stamped build, same upload: checkout app.js:44:78, throw-rejection 55:20, throw-captured 59:12, all symbolicated</td></tr>
+          <tr><td>React Native, debug id (Android release, Hermes)</td><td class="mono">main, map uploaded as +2, app sends +1: rejection index.android.bundle:1:438039, missing</td><td class="mono">withJujuConfig build, map uploaded with no release: rejection App.tsx:43:29, captured App.tsx:47:17, symbolicated</td></tr>
           <tr><td>Grouping after a rebuild</td><td colspan="2" class="mono">web line 44→50, Flutter 56→59 with a new build id: same issues, counts 1→2</td></tr>
         </tbody>
       </table>
@@ -243,6 +265,10 @@ juju upload -kind dart_symbols build/symbols/</pre>
       <div class="fix"><span class="mono">tests that couldn't fail</span><p>Breaking the column conversion or the −1 rule left the tests passing. New tests now target those edges.</p></div>
       <div class="fix"><span class="mono">lines missing on Android</span><p>The Android file's line table is out of address order, and a reused line reader gave up. Shared between workers, it was also a data race.</p></div>
       <div class="fix"><span class="mono">raw helper frames</span><p>Addresses made only of compiler helpers stayed raw with a misleading note. Now they're hidden, as Dart's decoder does.</p></div>
+      <div class="fix"><span class="mono">"use strict" lost</span><p>A line added before a bundle's <code>"use strict"</code> silently turns the whole bundle back to sloppy mode. The stamped first line repeats the directive, so it stays first.</p></div>
+      <div class="fix"><span class="mono">a map shifted twice</span><p>A run stopped between writing the bundle and its map would, run again, shift the map a second line: every frame one line off. Inject now reads what's done from the files, and a fuzz test stamps everything twice.</p></div>
+      <div class="fix"><span class="mono">Metro only bundles its own files</span><p>The prototype's id file in a temp folder failed with "the file is not watched". It's now written inside the app, under <code>node_modules/.cache/juju</code>.</p></div>
+      <div class="fix"><span class="mono">ids on a phone</span><p>The debug files list broke a 36-character id every few letters at 390 px. Names now stay on one line and the table scrolls in its box.</p></div>
       <div class="fix"><span class="mono">SDK frames as app code</span><p>Dart's debug info names files by path (<code>third_party/dart/sdk/…</code>), not <code>dart:</code>. The app-code check now knows those paths.</p></div>
     </div>
   </section>
@@ -252,6 +278,8 @@ juju upload -kind dart_symbols build/symbols/</pre>
     <h2>Not covered yet</h2>
     <ul>
       <li><strong>Reprocessing.</strong> Events received before their debug file stay as they arrived.</li>
+      <li><strong>Debug ids on iOS and with Expo</strong> use the same Metro plugin, but were verified on Android only. Expo apps also need their bundle step to use the project's <code>metro.config.js</code>.</li>
+      <li><strong>Inline source maps</strong> (a <code>data:</code> URL in the bundle) can't be stamped or uploaded: build separate <code>.map</code> files.</li>
       <li><strong>React Native on iOS</strong> needs the source map written during the Xcode build (<code>SOURCEMAP_FILE</code>), so the iOS/Android split for the same bug is only fixed on Android.</li>
       <li><strong>Obfuscated exception types.</strong> Dart core types stay readable, but your own exception classes need the obfuscation map uploaded too.</li>
       <li><strong>Very large symbol files</strong> are read fully into memory: fine at 2 MB, untested past 100 MB.</li>

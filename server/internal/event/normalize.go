@@ -151,6 +151,37 @@ func (e *Event) repairFields() {
 	}
 
 	e.repairTags()
+	e.repairDebugMeta()
+}
+
+const maxDebugImages = 100
+
+// repairDebugMeta keeps the images the server can use and drops the rest:
+// a malformed one would only mean a lookup that can never succeed.
+func (e *Event) repairDebugMeta() {
+	dm := e.DebugMeta
+	if dm == nil {
+		return
+	}
+	kept := dm.Images[:0]
+	dropped := 0
+	for _, im := range dm.Images {
+		id, err := uuid.Parse(im.DebugID)
+		if im.Type != "sourcemap" || err != nil || id == uuid.Nil || im.CodeFile == "" || len(im.CodeFile) > maxFrameField || len(kept) == maxDebugImages {
+			dropped++
+			continue
+		}
+		im.DebugID = id.String() // one spelling: lowercase, with dashes
+		kept = append(kept, im)
+	}
+	if dropped > 0 {
+		e.repair(fmt.Sprintf("debug_meta: dropped %d image(s) that weren't a sourcemap with a code_file and a UUID debug_id, or were over %d", dropped, maxDebugImages))
+	}
+	if len(kept) == 0 {
+		e.DebugMeta = nil
+		return
+	}
+	dm.Images = kept
 }
 
 func (e *Event) repairException(ex *Exception) {

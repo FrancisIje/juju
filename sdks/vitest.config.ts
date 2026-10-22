@@ -12,7 +12,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["*/test/**/*.test.ts"],
+    // .test.js: tests of plain-JavaScript files that run in Node, like the
+    // Metro plugin, which the TypeScript check (browser types only) skips.
+    include: ["*/test/**/*.test.ts", "*/test/**/*.test.js"],
     // Core must not depend on the browser, so it runs in plain Node. Web
     // tests opt into a simulated browser with a comment at the top of the
     // file: // @vitest-environment happy-dom

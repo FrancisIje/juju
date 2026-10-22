@@ -17,6 +17,7 @@ import (
 
 // upload sends debug files to a juju server after a release build:
 //
+//	juju upload dist/                               (after juju sourcemaps inject)
 //	juju upload -kind sourcemap -release web@2.3.1 dist/
 //	juju upload -kind dart_symbols build/symbols/
 //
@@ -30,7 +31,7 @@ func upload(args []string) error {
 	project := fs.String("project", os.Getenv("JUJU_PROJECT"), "project id (JUJU_PROJECT)")
 	secret := fs.String("secret", os.Getenv("JUJU_SECRET_KEY"), "project secret key (JUJU_SECRET_KEY)")
 	kind := fs.String("kind", "sourcemap", `"sourcemap" or "dart_symbols"`)
-	release := fs.String("release", "", "release the source maps belong to, e.g. web@2.3.1 (must match the SDK's release)")
+	release := fs.String("release", "", "release the source maps belong to, e.g. web@2.3.1 (must match the SDK's release). Not needed for maps with a debug id")
 	name := fs.String("name", "", "bundle name for a single source map (default: the file name without .map)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -41,9 +42,8 @@ func upload(args []string) error {
 	ext := ".map"
 	switch *kind {
 	case "sourcemap":
-		if *release == "" {
-			return errors.New("source maps need -release, matching the release your SDK sends")
-		}
+		// Without -release, each map must have a debug id; the server says
+		// so for any that doesn't.
 	case "dart_symbols":
 		ext = ".symbols"
 	default:
@@ -72,8 +72,10 @@ func upload(args []string) error {
 				// be matched against.
 				bundle = strings.TrimSuffix(filepath.Base(path), ".map")
 			}
-			q.Set("release", *release)
-			q.Set("name", bundle)
+			if *release != "" {
+				q.Set("release", *release)
+				q.Set("name", bundle)
+			}
 		}
 		if err := uploadOne(client, *server, *project, *secret, path, q); err != nil {
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", path, err)
@@ -115,9 +117,14 @@ func uploadOne(client *http.Client, server, project, secret, path string, q url.
 	var saved struct {
 		Kind, Release, Name, SHA256 string
 		Size                        int64
+		DebugID                     string `json:"debug_id"`
 	}
 	_ = json.Unmarshal(body, &saved)
-	fmt.Printf("✓ %s → %s %q (%s, sha256 %s…)\n", path, saved.Kind, saved.Name, humanSize(saved.Size), saved.SHA256[:min(12, len(saved.SHA256))])
+	what := fmt.Sprintf("%s %q", saved.Kind, saved.Name)
+	if saved.DebugID != "" {
+		what = "source map, debug id " + saved.DebugID
+	}
+	fmt.Printf("✓ %s → %s (%s, sha256 %s…)\n", path, what, humanSize(saved.Size), saved.SHA256[:min(12, len(saved.SHA256))])
 	return nil
 }
 

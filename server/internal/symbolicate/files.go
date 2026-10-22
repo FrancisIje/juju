@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"juju/internal/blob"
+	"juju/internal/debugid"
 	"juju/internal/store"
 )
 
@@ -18,6 +19,12 @@ type StoredFiles struct {
 
 func (f StoredFiles) SourceMap(ctx context.Context, projectID int64, release, name string) ([]byte, error) {
 	return f.read(ctx, projectID, "sourcemap", release, name)
+}
+
+// SourceMapByDebugID finds a source map by the debug id inside it, which
+// the upload stored it under (see Validate).
+func (f StoredFiles) SourceMapByDebugID(ctx context.Context, projectID int64, debugID string) ([]byte, error) {
+	return f.read(ctx, projectID, "sourcemap", "", debugID)
 }
 
 func (f StoredFiles) DartSymbols(ctx context.Context, projectID int64, buildID string) ([]byte, error) {
@@ -40,14 +47,17 @@ func (f StoredFiles) read(ctx context.Context, projectID int64, kind, release, n
 	return io.ReadAll(file)
 }
 
-// Validate checks an uploaded file is what it claims to be, and for Dart
-// symbols returns the build id to store it under. Rejecting a bad upload
-// with a clear message beats discovering it when the next crash arrives.
-func Validate(kind string, data []byte) (buildID string, err error) {
+// Validate checks an uploaded file is what it claims to be, and returns the
+// id to store it under: a Dart file's build id, or a source map's debug id
+// ("" if it has none). Rejecting a bad upload with a clear message beats
+// discovering it when the next crash arrives.
+func Validate(kind string, data []byte) (id string, err error) {
 	switch kind {
 	case "sourcemap":
-		_, err := parseSourceMap("upload", data)
-		return "", err
+		if _, err := parseSourceMap("upload", data); err != nil {
+			return "", err
+		}
+		return debugid.FromSourceMap(data), nil
 	case "dart_symbols":
 		syms, err := parseDartSymbols(data)
 		if err != nil {

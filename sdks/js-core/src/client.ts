@@ -1,6 +1,7 @@
 import { Breadcrumbs } from "./breadcrumbs";
 import { parseDsn, type Dsn } from "./dsn";
 import { defaultIsInApp, exceptionFromThrown, type InAppFn } from "./stacktrace";
+import { debugImages } from "./debugids";
 import { isoTime, monotonicClock, noopSpan, Transaction, type Span, type SpanOptions, type TransactionHost, type TransactionOptions } from "./tracing";
 import { byteLength, fetchTransport, type SendResult, type Transport } from "./transport";
 import type { AnalyticsEvent, Breadcrumb, Envelope, IdentifyEvent, JujuEvent, OutgoingEvent, SdkInfo, SessionData, SessionEvent, TransactionEvent, User } from "./types";
@@ -512,6 +513,8 @@ export class Client implements TransactionHost {
     if (Object.keys(tags).length > 0) event.tags = tags;
     const context = this.opts.context?.();
     if (context) event.context = context;
+    const images = debugImages(event.exception.stacktrace?.frames ?? []);
+    if (images.length > 0) event.debug_meta = { images };
     return event;
   }
 

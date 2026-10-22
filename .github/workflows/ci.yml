@@ -106,6 +106,8 @@ jobs:
       # go test fuzzes one target per run, so the PII scrubber gets its own.
       - name: Fuzz the PII scrubber
         run: go test ./internal/event -run='^$' -fuzz=FuzzScrub -fuzztime=20s
+      - name: Fuzz the debug id injector
+        run: go test ./internal/debugid -run='^$' -fuzz=FuzzInject -fuzztime=20s
 
   dashboard:
     runs-on: ubuntu-latest

@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["cart.js", "main.js"],
+  "sourcesContent": ["export function lineTotal(item) {\n  return item.price * item.qty;\n}\n\nexport function cartTotal(cart) {\n  let sum = 0;\n  for (const item of cart.items) {\n    sum += lineTotal(item);\n  }\n  return sum;\n}\n", "import { cartTotal } from \"./cart.js\";\n\nfunction checkout(cart) {\n  const total = cartTotal(cart);\n  if (total > 100) {\n    throw new Error(\"total too high: \" + total);\n  }\n  return total;\n}\n\nwindow.checkout = checkout;\n"],
+  "mappings": ";;AAAO,WAAS,UAAU,MAAM;AAC9B,WAAO,KAAK,QAAQ,KAAK;AAAA,EAC3B;AAEO,WAAS,UAAU,MAAM;AAC9B,QAAI,MAAM;AACV,eAAW,QAAQ,KAAK,OAAO;AAC7B,aAAO,UAAU,IAAI;AAAA,IACvB;AACA,WAAO;AAAA,EACT;;;ACRA,WAAS,SAAS,MAAM;AACtB,UAAM,QAAQ,UAAU,IAAI;AAC5B,QAAI,QAAQ,KAAK;AACf,YAAM,IAAI,MAAM,qBAAqB,KAAK;AAAA,IAC5C;AACA,WAAO;AAAA,EACT;AAEA,SAAO,WAAW;",
+  "names": []
+}

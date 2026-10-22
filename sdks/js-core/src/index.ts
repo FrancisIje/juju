@@ -7,6 +7,7 @@ export { Transaction, Span, isoTime, monotonicClock, MAX_SPANS, type SpanOptions
 export { Breadcrumbs } from "./breadcrumbs";
 export { parseDsn, DsnError, type Dsn } from "./dsn";
 export { parseStack, exceptionFromThrown, defaultIsInApp, type InAppFn } from "./stacktrace";
+export { debugImages } from "./debugids";
 export {
   fetchTransport,
   classify,
@@ -24,6 +25,7 @@ export { instrumentConsole, instrumentXHR, finishHttpSpan, redact, toText, type 
 export type {
   AnalyticsEvent,
   Breadcrumb,
+  DebugImage,
   Envelope,
   ExceptionData,
   Frame,

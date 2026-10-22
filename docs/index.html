@@ -278,6 +278,7 @@ flowchart LR
         <ul>
           <li>Upload API plus a <code>juju-cli</code> command for source maps (web, React Native) and Dart <code>--split-debug-info</code> symbols</li>
           <li>The worker rewrites minified or obfuscated frames into real file, line and function before fingerprinting</li>
+          <li>Debug ids: each JavaScript bundle names its own source map (<code>juju sourcemaps inject</code>, <code>withJujuConfig</code> for Metro), so the release name no longer has to match</li>
         </ul>
         <div class="whynow"><span class="label">Why now</span>Production stack traces are unreadable without it (<code>a.js:1:48213</code>). It also has to run before fingerprinting, or each build would group errors differently.</div>
         <p><a href="https://francisije.github.io/juju/symbolication.html">See real frames before and after symbolication, and how it was verified →</a></p>
