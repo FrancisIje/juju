@@ -15,6 +15,7 @@ import (
 
 // Upload a debug file (secret key required: these files contain your source code):
 //
+//	POST /api/v1/projects/{id}/files?kind=sourcemap                  (a map with a debug id)
 //	POST /api/v1/projects/{id}/files?kind=sourcemap&release=web@2.3.1&name=app.min.js
 //	POST /api/v1/projects/{id}/files?kind=dart_symbols
 //
@@ -31,10 +32,8 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request, projectID int64
 	kind, release, name := q.Get("kind"), strings.TrimSpace(q.Get("release")), strings.TrimSpace(q.Get("name"))
 	switch kind {
 	case "sourcemap":
-		if release == "" || name == "" {
-			httpx.WriteError(w, http.StatusBadRequest, "a source map needs release (the app's release, e.g. web@2.3.1) and name (the bundle it maps, e.g. app.min.js)")
-			return
-		}
+		// release and name are checked after reading the file: a map with
+		// a debug id needs neither.
 	case "dart_symbols":
 		release, name = "", "" // found by build id, which is read from the file
 	default:
@@ -56,20 +55,55 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request, projectID int64
 		a.fail(w, "read upload", err)
 		return
 	}
-	buildID, err := symbolicate.Validate(kind, data)
+	id, err := symbolicate.Validate(kind, data)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if kind == "dart_symbols" {
-		name = buildID
+	save := func(release, name string) (store.DebugFile, bool) {
+		f, err := a.Store.SaveDebugFile(r.Context(), projectID, store.DebugFile{Kind: kind, Release: release, Name: name, SHA256: b.SHA256, Size: b.Size})
+		if err != nil {
+			a.fail(w, "save debug file", err)
+			return f, false
+		}
+		return f, true
 	}
-	f, err := a.Store.SaveDebugFile(r.Context(), projectID, store.DebugFile{Kind: kind, Release: release, Name: name, SHA256: b.SHA256, Size: b.Size})
-	if err != nil {
-		a.fail(w, "save debug file", err)
+	if kind == "dart_symbols" {
+		f, ok := save("", id)
+		if ok {
+			httpx.WriteJSON(w, http.StatusCreated, uploaded{DebugFile: f})
+		}
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, f)
+
+	// Source maps: stored under the debug id inside them, which events
+	// name exactly, and also under release and name when those are given,
+	// for SDKs from before debug ids.
+	legacy := release != "" && name != ""
+	if id == "" && !legacy {
+		httpx.WriteError(w, http.StatusBadRequest, "this source map has no debug id, so juju can't tell which build it belongs to: run `juju sourcemaps inject` on the build output before uploading, or upload with release (e.g. web@2.3.1) and name (e.g. app.min.js)")
+		return
+	}
+	var f store.DebugFile
+	ok := true
+	if legacy {
+		if f, ok = save(release, name); !ok {
+			return
+		}
+	}
+	if id != "" {
+		if f, ok = save("", id); !ok {
+			return
+		}
+	}
+	httpx.WriteJSON(w, http.StatusCreated, uploaded{DebugFile: f, DebugID: id})
+}
+
+// uploaded is what an upload answers: the stored file, and the debug id it
+// can be found by, if it has one.
+type uploaded struct {
+	store.DebugFile
+	DebugID string `json:"debug_id,omitempty"`
 }
 
 func (a *API) listFiles(w http.ResponseWriter, r *http.Request, projectID int64) {

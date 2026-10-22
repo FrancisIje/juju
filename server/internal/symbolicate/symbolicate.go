@@ -30,6 +30,7 @@ var ErrNotFound = errors.New("debug file not found")
 // Files gives the worker the uploaded debug files' bytes.
 type Files interface {
 	SourceMap(ctx context.Context, projectID int64, release, name string) ([]byte, error)
+	SourceMapByDebugID(ctx context.Context, projectID int64, debugID string) ([]byte, error)
 	DartSymbols(ctx context.Context, projectID int64, buildID string) ([]byte, error)
 }
 
@@ -105,6 +106,7 @@ func (s *Service) javascript(ctx context.Context, e *event.Event) result {
 	}
 	looked := make([]mapped, len(frames))
 	wanted, done := 0, 0
+	ids := debugIDs(e)
 	for i, f := range frames {
 		if f.Filename == "" || f.Lineno == 0 || f.Colno == 0 {
 			continue // native frames like "Array.map (<anonymous>)"
@@ -114,11 +116,25 @@ func (s *Service) javascript(ctx context.Context, e *event.Event) result {
 			continue
 		}
 		wanted++
-		sm, err := s.sourceMap(ctx, e.ProjectID, e.Release, bundle)
+		// By debug id first: it names the exact build's map. Then by
+		// release and file name, for SDKs and uploads from before debug
+		// ids, and bundles that weren't stamped.
+		var sm *sourceMap
+		var err error
+		id := ids.of(f.Filename)
+		if id != "" {
+			sm, err = s.sourceMapByID(ctx, e.ProjectID, id)
+		}
+		if id == "" || errors.Is(err, ErrNotFound) {
+			sm, err = s.sourceMap(ctx, e.ProjectID, e.Release, bundle)
+		}
 		if err != nil {
-			if errors.Is(err, ErrNotFound) {
+			switch {
+			case errors.Is(err, ErrNotFound) && id != "":
+				note(fmt.Sprintf("no source map uploaded with debug id %s (for %q), nor for %q in release %q", id, bundle, bundle, e.Release))
+			case errors.Is(err, ErrNotFound):
 				note(fmt.Sprintf("no source map uploaded for %q in release %q", bundle, e.Release))
-			} else {
+			default:
 				note(fmt.Sprintf("source map for %q could not be used: %v", bundle, err))
 			}
 			continue
@@ -265,6 +281,50 @@ func (s *Service) sourceMap(ctx context.Context, projectID int64, release, name 
 		return nil, err
 	}
 	return v.(*sourceMap), nil
+}
+
+func (s *Service) sourceMapByID(ctx context.Context, projectID int64, id string) (*sourceMap, error) {
+	key := fmt.Sprintf("smid|%d|%s", projectID, id)
+	v, err := s.cache.get(key, func() (any, error) {
+		data, err := s.Files.SourceMapByDebugID(ctx, projectID, id)
+		if err != nil {
+			return nil, err
+		}
+		return parseSourceMap(id, data)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*sourceMap), nil
+}
+
+// debugIDTable finds a frame's debug id in the event's debug_meta: by the
+// exact file name first, then by file name without host or path, as long
+// as only one image has that name.
+type debugIDTable struct{ exact, base map[string]string }
+
+func debugIDs(e *event.Event) debugIDTable {
+	t := debugIDTable{exact: map[string]string{}, base: map[string]string{}}
+	if e.DebugMeta == nil {
+		return t
+	}
+	for _, im := range e.DebugMeta.Images {
+		t.exact[im.CodeFile] = im.DebugID
+		b := bundleName(im.CodeFile)
+		if prev, seen := t.base[b]; seen && prev != im.DebugID {
+			t.base[b] = "" // two bundles with this name: ambiguous, so unused
+		} else {
+			t.base[b] = im.DebugID
+		}
+	}
+	return t
+}
+
+func (t debugIDTable) of(filename string) string {
+	if id, ok := t.exact[filename]; ok {
+		return id
+	}
+	return t.base[bundleName(filename)]
 }
 
 func (s *Service) dartSymbols(ctx context.Context, projectID int64, buildID string) (*dartSymbols, error) {

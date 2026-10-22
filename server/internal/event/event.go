@@ -70,6 +70,9 @@ type Event struct {
 	DistinctID string         `json:"distinct_id,omitempty"`
 	AnonID     string         `json:"anon_id,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
+	// DebugMeta says which build each file in the stack trace came from,
+	// so the server finds the exact source map for it (see DebugImage).
+	DebugMeta *DebugMeta `json:"debug_meta,omitempty"`
 
 	SDK           SDK            `json:"sdk"`
 	ReceivedAt    time.Time      `json:"received_at"`
@@ -114,6 +117,22 @@ type RawFrame struct {
 type Symbolication struct {
 	Status string   `json:"status"` // "symbolicated", "partial", "missing", "failed"
 	Notes  []string `json:"notes,omitempty"`
+}
+
+// DebugMeta lists the debug images (bundles) the SDK saw in the app.
+type DebugMeta struct {
+	Images []DebugImage `json:"images"`
+}
+
+// DebugImage ties a file frames point at to its debug id: an id stamped
+// into both the bundle and its source map by the same build. Matching a
+// frame to a source map by this id, rather than by release name and file
+// name, always finds the map that build produced, whatever the release is
+// called.
+type DebugImage struct {
+	Type     string `json:"type"`      // "sourcemap"
+	CodeFile string `json:"code_file"` // the file as frames name it, e.g. https://shop.com/app.min.js
+	DebugID  string `json:"debug_id"`  // a UUID
 }
 
 type Breadcrumb struct {

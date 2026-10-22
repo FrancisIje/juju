@@ -42,6 +42,16 @@ export interface JujuEvent {
   context?: Record<string, unknown>;
   user?: User;
   tags?: Record<string, string>;
+  /** Which build each file in the stack came from, so the server finds its exact source map. */
+  debug_meta?: { images: DebugImage[] };
+}
+
+/** A bundle and the debug id its build stamped into it and its source map. */
+export interface DebugImage {
+  type: "sourcemap";
+  /** The file as stack frames name it, e.g. https://shop.com/assets/app.min.js. */
+  code_file: string;
+  debug_id: string;
 }
 
 /** A product analytics event: capture("checkout_started", { plan: "pro" }). */

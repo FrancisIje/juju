@@ -11,9 +11,18 @@
       "react-native": "./dist/index.js",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./metro": {
+      "types": "./metro.d.cts",
+      "require": "./metro.cjs",
+      "default": "./metro.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "metro.cjs",
+    "metro.d.cts"
+  ],
   "dependencies": {
     "@juju/core": "0.1.0"
   },

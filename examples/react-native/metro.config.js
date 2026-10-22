@@ -1,4 +1,7 @@
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+// Gives each bundle a debug id, so juju matches the source map from the
+// same build whatever the release is called.
+const { withJujuConfig } = require('@juju/react-native/metro');
 
 /**
  * Metro configuration
@@ -8,4 +11,4 @@ const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
  */
 const config = {};
 
-module.exports = mergeConfig(getDefaultConfig(__dirname), config);
+module.exports = withJujuConfig(mergeConfig(getDefaultConfig(__dirname), config));

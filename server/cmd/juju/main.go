@@ -34,6 +34,7 @@ const usage = `usage:
   juju migrate up|down|status
   juju project create -org NAME -name NAME
   juju project limits -id ID [-rate N|default] [-quota N|none]
+  juju sourcemaps inject PATH...
   juju upload -kind sourcemap|dart_symbols [-release R] PATH...
   juju user create -email EMAIL -org NAME [-name NAME]`
 
@@ -51,6 +52,9 @@ func run(args []string) error {
 	// upload talks to a server over HTTP; it needs no database settings.
 	if args[0] == "upload" {
 		return upload(args[1:])
+	}
+	if args[0] == "sourcemaps" {
+		return sourcemaps(args[1:]) // works on files only, like upload
 	}
 	cfg, err := config.Load()
 	if err != nil {

@@ -17,12 +17,22 @@ import (
 type fakeFiles struct {
 	maps    map[string]string // "release|name" -> testdata file
 	dart    map[string]string // build id -> testdata file
+	byID    map[string]string // source map debug id -> testdata file
 	lookups atomic.Int32
 }
 
 func (f *fakeFiles) SourceMap(_ context.Context, _ int64, release, name string) ([]byte, error) {
 	f.lookups.Add(1)
 	p, ok := f.maps[release+"|"+name]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return os.ReadFile(p)
+}
+
+func (f *fakeFiles) SourceMapByDebugID(_ context.Context, _ int64, id string) ([]byte, error) {
+	f.lookups.Add(1)
+	p, ok := f.byID[id]
 	if !ok {
 		return nil, ErrNotFound
 	}

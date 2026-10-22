@@ -147,12 +147,14 @@ Upload debug files after each release build, so stack traces show your original 
 
 ```bash
 export JUJU_URL=https://juju.example.com JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_...
-juju upload -kind sourcemap -release web@2.3.1 dist/            # web: *.map next to your bundles
-juju upload -kind sourcemap -release shop@1.4.0+12 index.android.bundle.map   # React Native
+juju sourcemaps inject dist/ && juju upload dist/               # web: stamp debug ids, then upload the maps
+juju upload index.android.bundle.map                            # React Native, with withJujuConfig in metro.config.js
 juju upload -kind dart_symbols build/symbols/                   # Flutter --split-debug-info
 ```
 
-The release must match what the SDK sends. Dart symbols are matched by build id. If frames still look
+A debug id stamped into each bundle and its map names the right map, whatever the release is called.
+React Native gets one from `withJujuConfig` (`@juju/react-native/metro`) in `metro.config.js`; Dart
+symbols are matched by build id. Maps without one need `-release`, matching what the SDK sends. If frames still look
 minified, the event's `symbolication.notes` say what's missing.
 
 ## Scale, limits and privacy

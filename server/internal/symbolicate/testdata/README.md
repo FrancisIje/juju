@@ -28,3 +28,12 @@ From `examples/flutter`, built with `flutter build apk --release --obfuscate --s
 and run on the Android emulator. The trace is copied from `adb logcat` (two traces: an async error and a
 zone error); the decoded answer key comes from `native_stack_traces` as above. This file's line table has
 sequences out of address order, which is what broke a forward-scanning lookup.
+
+## JavaScript, several lines: `multiline.js`, `multiline.js.map`
+
+For the debug id tests, which shift every line by one: an unminified esbuild bundle of two small files
+(`cart.js` and `main.js`, in the map's `sourcesContent`), so there are many lines to check.
+
+```bash
+esbuild main.js --bundle --sourcemap --format=iife --outfile=multiline.js
+```

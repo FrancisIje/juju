@@ -321,11 +321,12 @@ function Files({ project }: { project: ProjectInfo }) {
   const origin = window.location.origin;
   const upload = `export JUJU_URL=${origin} JUJU_PROJECT=${project.id} JUJU_SECRET_KEY=<your secret key>
 
-# Web: the *.map files next to your bundles
-juju upload -kind sourcemap -release web@1.0.0 dist/
+# Web: give each bundle a debug id (before deploying), then upload its map
+juju sourcemaps inject dist/
+juju upload dist/
 
-# React Native: the bundle's source map
-juju upload -kind sourcemap -release myapp@1.0.0+1 index.android.bundle.map
+# React Native: with withJujuConfig in metro.config.js, the release build's map
+juju upload android/app/build/generated/sourcemaps/react/release/index.android.bundle.map
 
 # Flutter: built with --obfuscate --split-debug-info=build/symbols
 juju upload -kind dart_symbols build/symbols/`;
@@ -335,7 +336,8 @@ juju upload -kind dart_symbols build/symbols/`;
         <h2>Readable stack traces for release builds</h2>
         <p className="muted">
           Release builds are minified or obfuscated, so their stack traces point at code nobody wrote. Upload the debug files from each build and juju maps frames back to your
-          source. Run this in CI after the build; the release must match the one your SDK sends.
+          source. Run this in CI after the build. Each bundle's debug id names its own map, so the release can be called anything; files uploaded with{" "}
+          <code>-release</code> and no debug id must match the release your SDK sends.
         </p>
         <Code>{upload}</Code>
       </section>
@@ -348,28 +350,33 @@ juju upload -kind dart_symbols build/symbols/`;
           </p>
         )}
         {data && data.files.length > 0 && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Kind</th>
-                <th>Release</th>
-                <th className="num">Size</th>
-                <th>Uploaded</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.files.map((f) => (
-                <tr key={f.id}>
-                  <td className="mono" style={{ overflowWrap: "anywhere" }}>{f.name}</td>
-                  <td>{f.kind === "dart_symbols" ? "Dart symbols" : "Source map"}</td>
-                  <td>{f.release ?? <span className="faint">any (build id)</span>}</td>
-                  <td className="num">{bytes(f.size)}</td>
-                  <td title={exact(f.created_at)}>{relative(f.created_at)}</td>
+          // Names are debug ids and build ids: kept on one line so they stay
+          // readable and copyable, with the table scrolling inside its box on
+          // a phone instead of breaking an id every few characters.
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Kind</th>
+                  <th>Release</th>
+                  <th className="num">Size</th>
+                  <th>Uploaded</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.files.map((f) => (
+                  <tr key={f.id}>
+                    <td className="mono" style={{ whiteSpace: "nowrap" }}>{f.name}</td>
+                    <td>{f.kind === "dart_symbols" ? "Dart symbols" : "Source map"}</td>
+                    <td>{f.release ?? <span className="faint">any ({f.kind === "dart_symbols" ? "build id" : "debug id"})</span>}</td>
+                    <td className="num">{bytes(f.size)}</td>
+                    <td title={exact(f.created_at)}>{relative(f.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>

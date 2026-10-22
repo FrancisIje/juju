@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"juju/internal/blob"
+	"juju/internal/debugid"
 	"juju/internal/store"
 )
 
@@ -73,6 +74,39 @@ func TestUploadDartSymbolsIsStoredUnderItsBuildID(t *testing.T) {
 	}
 }
 
+// A map with a debug id needs no release or name: it's stored under the id
+// inside it, which the SDK sends with each event.
+func TestUploadSourceMapWithDebugID(t *testing.T) {
+	js, sm := testdata(t, "app.min.js"), testdata(t, "app.min.js.map")
+	_, injected, id, err := debugid.Inject(js, sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux, fs := filesAPI(t, 10<<20)
+	rec := upload(mux, "kind=sourcemap", injected, "Bearer sk_good")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Release, Name string
+		DebugID       string `json:"debug_id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.DebugID != id || got.Name != id || got.Release != "" || len(fs.files) != 1 {
+		t.Fatalf("answer %+v, stored %+v; want it under debug id %s", got, fs.files, id)
+	}
+
+	// With release and name as well, it's findable both ways, so SDKs that
+	// don't send debug ids yet still get symbolicated.
+	mux, fs = filesAPI(t, 10<<20)
+	if rec := upload(mux, "kind=sourcemap&release=web@1&name=app.min.js", injected, "Bearer sk_good"); rec.Code != http.StatusCreated {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if len(fs.files) != 2 || fs.files[0].Release != "web@1" || fs.files[0].Name != "app.min.js" || fs.files[1].Name != id || fs.files[0].SHA256 != fs.files[1].SHA256 {
+		t.Fatalf("stored %+v", fs.files)
+	}
+}
+
 func TestUploadRejects(t *testing.T) {
 	mux, _ := filesAPI(t, 100)
 	cases := []struct {
@@ -84,7 +118,7 @@ func TestUploadRejects(t *testing.T) {
 	}{
 		{"no secret key", "kind=sourcemap&release=r&name=a.js", []byte("{}"), "", 401, "Authorization"},
 		{"unknown kind", "kind=zip", []byte("x"), "Bearer sk_good", 400, "kind must be"},
-		{"source map without release", "kind=sourcemap&name=a.js", []byte("{}"), "Bearer sk_good", 400, "needs release"},
+		{"source map without release or debug id", "kind=sourcemap&name=a.js", []byte(`{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA"}`), "Bearer sk_good", 400, "has no debug id"},
 		{"not a source map", "kind=sourcemap&release=r&name=a.js", []byte("hello"), "Bearer sk_good", 400, "not a valid source map"},
 		{"not a debug file", "kind=dart_symbols", []byte("hello"), "Bearer sk_good", 400, "ELF"},
 		{"over the limit", "kind=sourcemap&release=r&name=a.js", bytes.Repeat([]byte("x"), 101), "Bearer sk_good", 413, "upload limit"},
