@@ -4,6 +4,7 @@
 //	juju migrate up|down|status             manage the database schema
 //	juju project create -org acme -name web create a project and print its keys
 //	juju upload -kind sourcemap -release R dir/  upload debug files for symbolication
+//	juju release -name R                     record the git commit release R was built from
 //	juju user create -email E -org O         add a dashboard account (asks for a password)
 package main
 
@@ -36,6 +37,7 @@ const usage = `usage:
   juju project limits -id ID [-rate N|default] [-quota N|none]
   juju sourcemaps inject PATH...
   juju upload -kind sourcemap|dart_symbols [-release R] PATH...
+  juju release -name R [-commit SHA] [-repo URL]
   juju user create -email EMAIL -org NAME [-name NAME]`
 
 func main() {
@@ -52,6 +54,9 @@ func run(args []string) error {
 	// upload talks to a server over HTTP; it needs no database settings.
 	if args[0] == "upload" {
 		return upload(args[1:])
+	}
+	if args[0] == "release" {
+		return release(args[1:]) // also only talks to a server
 	}
 	if args[0] == "sourcemaps" {
 		return sourcemaps(args[1:]) // works on files only, like upload

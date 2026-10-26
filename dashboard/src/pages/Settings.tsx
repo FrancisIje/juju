@@ -9,12 +9,13 @@ import { bytes, exact, relative } from "../lib/time";
 import { useApi } from "../lib/useApi";
 import { Team } from "./Team";
 
-export type SettingsTab = "setup" | "keys" | "alerts" | "files" | "team";
+export type SettingsTab = "setup" | "keys" | "alerts" | "files" | "agents" | "team";
 const tabs: { id: SettingsTab; label: string }[] = [
   { id: "setup", label: "Setup" },
   { id: "keys", label: "Keys" },
   { id: "alerts", label: "Alerts" },
   { id: "files", label: "Debug files" },
+  { id: "agents", label: "AI agents" },
   { id: "team", label: "Team" },
 ];
 
@@ -55,6 +56,7 @@ export function Settings({ projectId, tab }: { projectId: number; tab: SettingsT
       {p && tab === "keys" && <Keys project={p} secret={secret} onSecret={setSecret} />}
       {tab === "alerts" && <Alerts projectId={projectId} />}
       {p && tab === "files" && <Files project={p} />}
+      {p && tab === "agents" && <Agents project={p} />}
       {tab === "team" && org && <Team org={org} />}
     </div>
   );
@@ -158,6 +160,8 @@ function Alerts({ projectId }: { projectId: number }) {
   const { toast } = useApp();
   const { data, error, setData, reload } = useApi<AlertsView>(`/api/ui/projects/${projectId}/alerts`);
   const [webhook, setWebhook] = useState("");
+  const [hookUrl, setHookUrl] = useState("");
+  const [hookSecret, setHookSecret] = useState("");
   const [emails, setEmails] = useState("");
   const [onNew, setOnNew] = useState(true);
   const [onRegression, setOnRegression] = useState(true);
@@ -167,12 +171,13 @@ function Alerts({ projectId }: { projectId: number }) {
 
   useEffect(() => {
     if (!data) return;
+    setHookUrl(data.webhook_url);
     setEmails(data.email_to.join(", "));
     setOnNew(data.on_new_issue);
     setOnRegression(data.on_regression);
   }, [data]);
 
-  async function save(e: FormEvent, removeWebhook = false) {
+  async function save(e: FormEvent, removeWebhook = false, rotateSecret = false) {
     e.preventDefault();
     setBusy(true);
     setFormError("");
@@ -181,6 +186,10 @@ function Alerts({ projectId }: { projectId: number }) {
         email_to: emails.split(/[\s,;]+/).filter(Boolean),
         on_new_issue: onNew,
         on_regression: onRegression,
+        // Unlike Slack's, this URL is shown, so the field holds the saved
+        // one and sending it back as it is changes nothing.
+        webhook_url: hookUrl.trim(),
+        rotate_webhook_secret: rotateSecret,
       };
       // Leaving the webhook field empty keeps the saved one; the server
       // never sends it back, so there's nothing to pre-fill.
@@ -189,7 +198,8 @@ function Alerts({ projectId }: { projectId: number }) {
       const v = await api<AlertsView>(`/api/ui/projects/${projectId}/alerts`, { method: "PUT", body });
       setData(v);
       setWebhook("");
-      toast("Alert settings saved");
+      setHookSecret(v.webhook_secret ?? "");
+      toast(v.webhook_secret && rotateSecret ? "New signing secret made. The old one no longer matches." : "Alert settings saved");
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : "Couldn't save.");
     } finally {
@@ -249,6 +259,32 @@ function Alerts({ projectId }: { projectId: number }) {
           </span>
         </div>
         <div className="field">
+          <label htmlFor="hook">Webhook for programs</label>
+          <input id="hook" className="input mono" type="url" autoComplete="off" placeholder="https://agents.example.com/juju" value={hookUrl} onChange={(e) => setHookUrl(e.target.value)} />
+          <span className="hint">
+            juju posts signed JSON here for each alert, with the issue and the commit its release was built from, so a job can start an AI agent on it. Leave empty to turn it
+            off.
+            {data.webhook_url && (
+              <>
+                {" "}
+                <button type="button" className="btn ghost small" onClick={(e) => void save(e, false, true)}>
+                  New signing secret
+                </button>
+              </>
+            )}
+          </span>
+        </div>
+        {hookSecret && (
+          <div className="banner ok" role="status" style={{ display: "grid", gap: "var(--space-2)" }}>
+            <strong>Your webhook signing secret. Copy it now: it's shown only this once.</strong>
+            <span>
+              Your receiver checks each call with it: <code>X-Juju-Signature</code> is <code>sha256=</code> + the hex HMAC-SHA256 of <code>X-Juju-Timestamp</code>, a dot, and
+              the body.
+            </span>
+            <Code>{hookSecret}</Code>
+          </div>
+        )}
+        <div className="field">
           <label htmlFor="emails">Email to</label>
           <input id="emails" className="input" placeholder="you@example.com, team@example.com" value={emails} onChange={(e) => setEmails(e.target.value)} disabled={!data.email_available && !emails} />
           <span className="hint">{data.email_available ? "Separate addresses with commas." : "Email needs SMTP settings on the server (JUJU_SMTP_ADDR). Slack works without it."}</span>
@@ -272,7 +308,7 @@ function Alerts({ projectId }: { projectId: number }) {
           <button className="btn primary" disabled={busy}>
             Save
           </button>
-          <button type="button" className="btn" onClick={sendTest} disabled={!data.slack_webhook_set && data.email_to.length === 0} title="Uses the saved settings">
+          <button type="button" className="btn" onClick={sendTest} disabled={!data.slack_webhook_set && data.email_to.length === 0 && !data.webhook_url} title="Uses the saved settings">
             Send a test alert
           </button>
         </div>
@@ -378,6 +414,55 @@ juju upload -kind dart_symbols build/symbols/`;
             </table>
           </div>
         )}
+      </section>
+    </div>
+  );
+}
+
+function Agents({ project }: { project: ProjectInfo }) {
+  const origin = window.location.origin;
+  const mcpURL = `${origin}/api/v1/projects/${project.id}/mcp`;
+  const claude = `claude mcp add --transport http juju ${mcpURL} \\
+  --header "Authorization: Bearer $JUJU_SECRET_KEY"`;
+  const cursor = JSON.stringify({ mcpServers: { juju: { url: mcpURL, headers: { Authorization: "Bearer ${env:JUJU_SECRET_KEY}" } } } }, null, 2);
+  const ci = `export JUJU_URL=${origin} JUJU_PROJECT=${project.id} JUJU_SECRET_KEY=<your secret key>
+
+# After each release build: which commit this release is
+juju release -name web@$VERSION`;
+  return (
+    <div style={{ display: "grid", gap: "var(--space-5)" }}>
+      <section className="panel" style={{ padding: "var(--space-5)", display: "grid", gap: "var(--space-3)" }}>
+        <h2>Let an AI agent fix issues</h2>
+        <p className="muted">
+          Connect your coding agent to juju over MCP and ask it to "fix the top juju issue". It reads the stack trace, breadcrumbs and the commit the release was built from,
+          fixes the code in your checkout, and links its pull request to the issue; you resolve it once the fix ships. The agent runs on your machine or in your CI with your code: juju never
+          sees your repository.
+        </p>
+        <p className="muted">It uses this project's secret key, which can read and change its issues. Keep it in an environment variable, out of files you commit.</p>
+      </section>
+      <section className="panel" style={{ padding: "var(--space-5)", display: "grid", gap: "var(--space-3)" }}>
+        <h2>Claude Code</h2>
+        <Code>{claude}</Code>
+        <h2>Cursor and other MCP clients</h2>
+        <p className="muted">
+          In <code>.cursor/mcp.json</code>, or your client's MCP settings. The server address is <code>{mcpURL}</code>.
+        </p>
+        <Code>{cursor}</Code>
+      </section>
+      <section className="panel" style={{ padding: "var(--space-5)", display: "grid", gap: "var(--space-3)" }}>
+        <h2>Record each release's commit</h2>
+        <p className="muted">
+          Without it the agent only knows the release name, and may read today's code instead of the code that crashed. Run this in CI next to <code>juju upload</code>; it
+          reads the commit and repository from git.
+        </p>
+        <Code>{ci}</Code>
+      </section>
+      <section className="panel" style={{ padding: "var(--space-5)", display: "grid", gap: "var(--space-3)" }}>
+        <h2>Start an agent on every new issue</h2>
+        <p className="muted">
+          Add a webhook under <Link className="link" to={`/p/${project.id}/settings/alerts`}>Alerts</Link>: juju posts each new issue and regression there, signed, so your own
+          job can start an agent on it. Or run one on a schedule, like the GitHub Actions example in the juju repository (<code>examples/agent-fix</code>).
+        </p>
       </section>
     </div>
   );

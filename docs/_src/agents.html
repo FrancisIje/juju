@@ -1,0 +1,324 @@
+<title>juju AI Agents</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column: the problem (a real get_issue answer), a stepper through the real loop, the four pieces with their reasons, setup, what was checked, limits. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #6d28d9;
+  --accent-soft: #f1ebfd;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --warn: #a35300;
+  --warn-soft: #fdf1e3;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2ff;
+    --code-bg: #1d242d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2ff;
+  --code-bg: #1d242d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section, .block { display: grid; gap: 16px; }
+section { gap: 22px; }
+.block { gap: 10px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-x: auto; white-space: nowrap; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Six columns don't fit a phone: keep the rows readable and let the panel scroll sideways. */
+table.wide { min-width: 680px; }
+.del { color: var(--bad); text-decoration: line-through; }
+.ins { color: var(--ok); }
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix .mono { font-family: var(--f-mono); font-size: 0.8rem; color: var(--accent); }
+.fix p { font-size: 0.93rem; }
+footer { color: var(--muted); font-size: 0.9rem; }
+/* the agent loop stepper */
+.picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.picks button { font: inherit; font-size: 0.9rem; padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--fg); cursor: pointer; }
+.picks button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 700; }
+.who { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-family: var(--f-mono); font-size: 0.78rem; color: var(--muted); }
+.who b { color: var(--fg); font-weight: 600; }
+.who .arrow { color: var(--accent); }
+.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.tool { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.tool code { justify-self: start; }
+.tool p { font-size: 0.9rem; color: var(--muted); }
+.tag { font-family: var(--f-mono); font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; justify-self: start; }
+.tag.read { color: var(--info); border: 1px solid var(--info); }
+.tag.write { color: var(--warn); border: 1px solid var(--warn); }
+.ok { color: var(--ok); font-weight: 700; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Phase 10 · AI agents</span>
+    <h1>From a crash to a pull request, without copying anything across</h1>
+    <p class="lede">Fixing a production crash used to mean opening juju, reading the stack trace, finding the release, checking out the right code, and pasting all of that into an AI agent. Now the agent asks juju itself. It reads the crash and the commit that crashed, and when it opens a fix, it records the pull request on the issue. juju never runs the agent and never sees your repository.</p>
+    <div class="logline">[phase 10] <b>DONE</b> verified="official MCP SDK client read issue 1 with commit 72925b4, linked a PR, resolved it; crash again → signed regression webhook accepted by an independent Python receiver; end-to-end test over the real queue and Postgres" tests="Go unit + integration, 81 dashboard"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The problem</span>
+    <h2>A stack trace isn't enough to fix a bug</h2>
+    <p>This is what an agent gets from juju's <code>get_issue</code> tool for a real crash sent to a local server during verification:</p>
+    <pre class="code"># Issue 1: TypeError: cart.items is undefined
+
+Status: unresolved
+Culprit: renderCart (src/cart.js)
+Environments: production
+
+## Releases (newest first)
+- web@2.0.0: commit 72925b4bd9aa72b92b4d2bcc0deaae34d41021f1 in https://github.com/FrancisIje/juju
+
+Stack trace, most recent call first (* = your code):
+* renderCart  src/cart.js:42:17
+  commitRoot  node_modules/react-dom/cjs/react-dom.js:100
+
+Breadcrumbs, oldest first (what happened just before):
+- [navigation] /checkout
+- [http] GET /api/cart 500</pre>
+    <p>Three things in it come from earlier phases: the readable frame (symbolication), the breadcrumbs (the SDKs), and grouping into one issue. The new line is <b>the commit</b>. Without it, the agent knows only "web@2.0.0" and reads today's code. If the bug is already half-fixed, or the file has moved, it fixes the wrong thing.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Try it</span>
+    <h2>The loop, one step at a time</h2>
+    <p>Each step shows what was really sent during the manual run against a local juju server.</p>
+    <div class="panel" style="display:grid;gap:14px">
+      <div class="picks" role="group" aria-label="Step">
+        <button type="button" data-step="release" aria-pressed="true">1 · CI records the commit</button>
+        <button type="button" data-step="crash" aria-pressed="false">2 · A crash arrives</button>
+        <button type="button" data-step="hook" aria-pressed="false">3 · The webhook fires</button>
+        <button type="button" data-step="read" aria-pressed="false">4 · The agent reads it</button>
+        <button type="button" data-step="link" aria-pressed="false">5 · It links its PR</button>
+        <button type="button" data-step="again" aria-pressed="false">6 · The crash comes back</button>
+      </div>
+      <div class="who" id="who" aria-live="polite"></div>
+      <p id="explain"></p>
+      <pre class="code" id="wire"></pre>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">How it works</span>
+    <h2>Four pieces, each for a reason</h2>
+
+    <div class="block">
+      <h3>The commit is recorded on the server, not sent by the SDKs</h3>
+      <p>CI runs <code>juju release -name web@2.0.0</code> after the build. It reads the commit from <code>git rev-parse HEAD</code> and the repository from the <code>origin</code> remote, and stores them against the release name.</p>
+      <div class="why"><span class="label">Why</span>Every SDK already sends a release. Mapping release → commit on the server makes it work for web, React Native and Flutter apps with no SDK change and no app update. It also keeps the commit out of every event payload.</div>
+      <div class="why"><span class="label">Why it strips the URL</span>A CI checkout's remote often holds a token: <code>https://x-access-token:ghs_…@github.com/acme/web</code>. The CLI drops the user name and password, and the server refuses any URL that still has one. Otherwise the token would be stored and shown to everyone on the team.</div>
+    </div>
+
+    <div class="block">
+      <h3>MCP is served by juju itself</h3>
+      <p><a href="https://modelcontextprotocol.io">MCP</a> (Model Context Protocol) is how coding agents call outside tools. juju answers it at <code>POST /api/v1/projects/{id}/mcp</code> with the project's secret key. Connecting an agent is one command:</p>
+      <pre class="code">claude mcp add --transport http juju https://myjuju.dev/api/v1/projects/1/mcp \
+  --header "Authorization: Bearer $JUJU_SECRET_KEY"</pre>
+      <div class="tools">
+        <div class="tool"><span class="tag read">read</span><code>list_issues</code><p>Filter by status, text and environment; sort by recency or users affected.</p></div>
+        <div class="tool"><span class="tag read">read</span><code>get_issue</code><p>The crash report above: frames, breadcrumbs, tags, context, commits, linked fixes.</p></div>
+        <div class="tool"><span class="tag read">read</span><code>list_issue_events</code><p>Recent raw events, to compare users, devices and inputs.</p></div>
+        <div class="tool"><span class="tag write">write</span><code>link_issue</code><p>Attach the pull request. The same URL again updates the title instead of adding a duplicate.</p></div>
+        <div class="tool"><span class="tag write">write</span><code>update_issue</code><p>Resolve, ignore or reopen.</p></div>
+      </div>
+      <div class="why"><span class="label">Why on the server, not an installed program</span>A program people install (a "stdio" MCP server) needs Node or Go on every laptop and CI runner, and an update on each. A URL needs nothing. The endpoint is stateless: no session, every request carries the key, so any juju process can answer it and a restart loses nothing.</div>
+      <div class="why"><span class="label">Why mistakes come back as results</span>A bad argument ("issue 999", "status: done") returns a normal result marked <code>isError</code> with a sentence saying what's wrong. The model reads it and tries again. A protocol error would only tell the client something broke.</div>
+      <div class="why"><span class="label">Why it checks Origin</span>An agent doesn't send an <code>Origin</code> header; a browser always does. A request from any other site's page is refused, so a page that got hold of a key can't use someone's browser to call it.</div>
+      <p>The same actions are plain HTTP for scripts: <code>GET …/issues/{id}</code>, <code>POST …/issues/{id}/status</code>, <code>POST …/issues/{id}/links</code>, <code>POST …/releases</code>.</p>
+    </div>
+
+    <div class="block">
+      <h3>A signed webhook starts agents without a person</h3>
+      <p>Next to Slack and email, an alert can go to any URL as JSON: the issue, its link, and the release's commit. Two headers come with it:</p>
+      <pre class="code">X-Juju-Timestamp: 1793008977
+X-Juju-Signature: sha256=<span class="c">&lt;hex HMAC-SHA256 of "1793008977." + body, keyed with the signing secret&gt;</span></pre>
+      <div class="why"><span class="label">Why sign it</span>The receiver probably starts a paid agent run. Anyone who finds its URL could post a fake issue to it. Only juju and the receiver know the secret, so a matching signature proves where the call came from and that the body wasn't changed.</div>
+      <div class="why"><span class="label">Why the timestamp is inside the signature</span>Without it, someone who captured one real call could replay it forever. The receiver refuses calls older than a few minutes, and the timestamp can't be changed without breaking the signature.</div>
+      <div class="why"><span class="label">Why the secret is shown once</span>Like the project secret key: the dashboard shows it in the response that created it, never on a reload. "New signing secret" replaces it.</div>
+    </div>
+
+    <div class="block">
+      <h3>The agent links; a person resolves</h3>
+      <p>The example GitHub Actions workflow (<code>examples/agent-fix</code>) lets Claude Code read the issue, fix it on a branch, open a pull request and call <code>link_issue</code>. It doesn't give it <code>update_issue</code>.</p>
+      <div class="why"><span class="label">Why</span>An issue resolved before the fix ships would come straight back as a "regression" on the next crash, and the signal that a fix didn't work would be lost in noise. Resolving after the merge keeps regressions meaningful. The linked PR still shows on the issue page right away, so nobody starts a second fix.</div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Set it up</h2>
+    <div class="block">
+      <span class="label">CI, after each release build</span>
+      <pre class="code">export JUJU_URL=https://myjuju.dev JUJU_PROJECT=1 JUJU_SECRET_KEY=sk_...
+juju upload dist/                  <span class="c"># source maps, as before</span>
+juju release -name web@$VERSION    <span class="c"># new: which commit this release is</span></pre>
+    </div>
+    <div class="block">
+      <span class="label">Cursor and other MCP clients (.cursor/mcp.json)</span>
+      <pre class="code">{
+  "mcpServers": {
+    "juju": {
+      "url": "https://myjuju.dev/api/v1/projects/1/mcp",
+      "headers": { "Authorization": "Bearer ${env:JUJU_SECRET_KEY}" }
+    }
+  }
+}</pre>
+    </div>
+    <div class="block">
+      <span class="label">Checking the webhook signature (Node)</span>
+      <pre class="code">const want = "sha256=" + crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
+const fresh = Math.abs(Date.now() / 1000 - Number(ts)) &lt; 300;
+const ok = fresh &amp;&amp; crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want)); <span class="c">// lengths must match first</span></pre>
+    </div>
+    <p>The dashboard has all of this ready to copy for each project under <b>Settings → AI agents</b>, with the project's own address filled in.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked</h2>
+    <div class="panel" style="padding:0">
+      <table class="wide">
+        <thead><tr><th>Check</th><th>On</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>A real MCP client speaks to it</td><td>Official MCP TypeScript SDK 1.20.2 against a local server</td><td>Negotiated protocol <code>2025-06-18</code>; listed 5 tools; <code>get_issue</code> returned commit <code>72925b4…</code>; unknown issue 999 came back as <code>isError</code>; link and resolve worked</td></tr>
+          <tr><td><code>juju release</code> from a real checkout</td><td>This repository's worktree</td><td>Read commit <code>72925b4b…</code> and turned <code>https://github.com/FrancisIje/juju.git</code> into <code>https://github.com/FrancisIje/juju</code>; a wrong key gave <code>401</code>, <code>-commit main</code> gave <code>400</code></td></tr>
+          <tr><td>Webhook signature</td><td>An independent Python receiver using <code>hmac</code></td><td><code>signature_ok: true</code> for the new issue and the regression, both carrying the commit and repository</td></tr>
+          <tr><td>Secret shown once</td><td>Dashboard API, manual and in a test</td><td>Present in the save that created it; absent on reload and on a later save that didn't touch the webhook</td></tr>
+          <tr><td>The whole loop</td><td>Go integration test: real Postgres, JetStream queue, worker, notifier, live updates</td><td>Release → crash → signed webhook → MCP read → link → resolve → open dashboard refreshed → crash again → regression webhook</td></tr>
+          <tr><td>One project's key can't touch another's issues</td><td>Postgres integration test</td><td>Linking project A's issue with project B's key: not found, no row added</td></tr>
+          <tr><td>Protocol edge cases</td><td>Go unit tests</td><td>Bad JSON, batches, unknown method or tool, unsupported version header, foreign Origin (403), notifications (202, no body)</td></tr>
+          <tr><td>Dashboard</td><td>Chrome via Playwright, light, dark, 390 px phone</td><td>Fixes panel, commit link on the release chip, AI agents tab; no sideways scroll on the phone (scroll width 390)</td></tr>
+          <tr><td>Migration</td><td>Postgres</td><td>Up, down, up</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="fixes">
+      <div class="fix"><span class="mono">"-  [navigation] /checkout"</span><p>The first manual run showed a double space before each breadcrumb that had no timestamp. The tests had always given breadcrumbs timestamps. The timestamp is now left out when empty, and the integration test checks a breadcrumb without one.</p></div>
+      <div class="fix"><span class="mono">"links its PR and resolves it"</span><p>The first version of the AI agents tab said the agent resolves the issue, while the workflow and README leave that to a person after the merge. The tab now says the same as the rest.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>Not covered yet</h2>
+    <ul>
+      <li>juju doesn't run agents itself. Someone has to run the workflow or a receiver. A juju-hosted agent would need repository access and a sandbox, which is a separate decision.</li>
+      <li>Starting a GitHub Action straight from the webhook needs a small relay: GitHub's <code>repository_dispatch</code> wants a GitHub token, which juju doesn't hold.</li>
+      <li>The secret key is all-or-nothing for a project: an agent that can read issues can also resolve them. Read-only keys would need key scopes.</li>
+      <li>The example workflow was checked as valid YAML but not run on GitHub, and connecting with the <code>claude mcp add</code> command was not tried (the official SDK client was).</li>
+      <li>Commit links use <code>&lt;repository&gt;/commit/&lt;sha&gt;</code>, which works for GitHub, GitLab and Gitea. Bitbucket uses <code>/commits/</code> and opens a 404.</li>
+      <li>Webhooks share the limit of 30 alerts per project per hour with Slack and email.</li>
+    </ul>
+  </section>
+
+  <footer>Part of the juju project docs. See the <a href="https://francisije.github.io/juju/">roadmap</a>, <a href="https://francisije.github.io/juju/symbolication.html">symbolication</a> (where readable frames come from), <a href="https://francisije.github.io/juju/dashboard.html">dashboard and alerts</a>, and <a href="https://francisije.github.io/juju/scale.html">scale and hardening</a>.</footer>
+</div>
+
+<script>
+(function () {
+  // Each step is what was sent during the manual run (see Verification).
+  var steps = {
+    release: {
+      who: ["CI", "juju"],
+      text: "After the build, CI records which commit the release is. The CLI reads git; the server stores it against the release name.",
+      wire: "$ juju release -name web@2.0.0\n✓ release web@2.0.0 → commit 72925b4bd9aa72b92b4d2bcc0deaae34d41021f1 in https://github.com/FrancisIje/juju\n\nPOST /api/v1/projects/1/releases\nAuthorization: Bearer sk_…\n{\"name\":\"web@2.0.0\",\"commit\":\"72925b4bd9aa72b92b4d2bcc0deaae34d41021f1\",\"repository\":\"https://github.com/FrancisIje/juju\"}"
+    },
+    crash: {
+      who: ["app (SDK)", "juju"],
+      text: "The app crashes in production. The SDK sends the error with its release, as it always has. Nothing about it changed for this phase.",
+      wire: "POST /api/v1/projects/1/events\nX-Juju-Key: pk_…\n{\"events\":[{\"type\":\"error\",\"release\":\"web@2.0.0\",\"environment\":\"production\",\n  \"exception\":{\"type\":\"TypeError\",\"message\":\"cart.items is undefined\",\n    \"stacktrace\":{\"frames\":[{\"function\":\"renderCart\",\"filename\":\"src/cart.js\",\"lineno\":42,\"colno\":17,\"in_app\":true}, …]}},\n  \"breadcrumbs\":[{\"type\":\"navigation\",\"message\":\"/checkout\"},{\"type\":\"http\",\"message\":\"GET /api/cart 500\"}]}]}\n\n← 202 Accepted"
+    },
+    hook: {
+      who: ["juju", "your receiver"],
+      text: "It's a new issue, so juju alerts. The webhook carries the commit, so the job it starts knows which code to check out. The receiver checked the signature and accepted it.",
+      wire: "POST http://127.0.0.1:8192/hook\nX-Juju-Event: new_issue\nX-Juju-Timestamp: 1793008977\nX-Juju-Signature: sha256=…\n\n{\"kind\":\"new_issue\",\"project\":{\"id\":1,\"name\":\"shop\"},\n \"issue\":{\"id\":1,\"title\":\"TypeError: cart.items is undefined\",\"culprit\":\"renderCart (src/cart.js)\",\"url\":\"http://127.0.0.1:8191/p/1/issues/1\"},\n \"release\":\"web@2.0.0\",\"environment\":\"production\",\n \"commit\":\"72925b4bd9aa72b92b4d2bcc0deaae34d41021f1\",\"repository\":\"https://github.com/FrancisIje/juju\"}\n\nreceiver: signature_ok=true age_s=0"
+    },
+    read: {
+      who: ["agent", "juju (MCP)"],
+      text: "The agent calls get_issue and gets the crash as a developer reads it: your frames marked with *, the breadcrumbs, and the commit to read the code at.",
+      wire: "→ {\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_issue\",\"arguments\":{\"issue_id\":1}}}\n\n← # Issue 1: TypeError: cart.items is undefined\n  - web@2.0.0: commit 72925b4bd9aa72b92b4d2bcc0deaae34d41021f1 in https://github.com/FrancisIje/juju\n  * renderCart  src/cart.js:42:17\n    commitRoot  node_modules/react-dom/cjs/react-dom.js:100\n  - [http] GET /api/cart 500\n\nthen: git show 72925b4:src/cart.js"
+    },
+    link: {
+      who: ["agent", "juju (MCP)"],
+      text: "The agent fixes the code, opens a pull request, and records it on the issue. Open dashboards refresh and show it under Fixes, so nobody starts a second fix.",
+      wire: "→ tools/call link_issue {\"issue_id\":1,\"url\":\"https://github.com/FrancisIje/juju/pull/999\",\"title\":\"Handle an empty cart\"}\n← Linked https://github.com/FrancisIje/juju/pull/999 to issue 1.\n\n(after the merge, a person or a script)\n→ tools/call update_issue {\"issue_id\":1,\"status\":\"resolved\"}\n← Issue 1 is now resolved."
+    },
+    again: {
+      who: ["app (SDK)", "juju", "your receiver"],
+      text: "The same crash arrives after the issue was resolved. juju reopens it as a regression and the webhook says so: the fix didn't hold, and the next run knows it.",
+      wire: "← 202 Accepted\n\nPOST http://127.0.0.1:8192/hook\nX-Juju-Event: regression\n{\"kind\":\"regression\",\"issue\":{\"id\":1,…},\"commit\":\"72925b4…\"}\n\nreceiver: signature_ok=true"
+    }
+  };
+  var who = document.getElementById("who");
+  var explain = document.getElementById("explain");
+  var wire = document.getElementById("wire");
+  function show(name) {
+    var s = steps[name];
+    who.textContent = "";
+    s.who.forEach(function (w, i) {
+      if (i > 0) { var a = document.createElement("span"); a.className = "arrow"; a.textContent = "→"; who.append(a); }
+      var b = document.createElement("b"); b.textContent = w; who.append(b);
+    });
+    explain.textContent = s.text;
+    wire.textContent = s.wire;
+    document.querySelectorAll("[data-step]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.step === name)); });
+  }
+  document.querySelectorAll("[data-step]").forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.step); }); });
+  show("release");
+})();
+</script>

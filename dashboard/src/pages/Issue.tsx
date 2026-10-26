@@ -5,7 +5,7 @@ import { StackTrace } from "../components/issue/StackTrace";
 import { Code } from "../components/CopyButton";
 import { Sparkline } from "../components/Sparkline";
 import { PlatformChip, StatusChip } from "../components/StatusChip";
-import { api, ApiError, type Activity, type EventPayload, type IssueDetail, type Status } from "../lib/api";
+import { api, ApiError, type Activity, type EventPayload, type IssueDetail, type ReleaseCommit, type Status } from "../lib/api";
 import { useApp } from "../lib/app";
 import { splitTitle } from "../lib/frames";
 import { useShortcuts } from "../lib/keys";
@@ -281,6 +281,27 @@ export function Issue({ projectId, issueId }: { projectId: number; issueId: numb
         </section>
 
         <aside style={{ display: "grid", gap: "var(--space-4)" }}>
+          {d.links.length > 0 && (
+            <section className="panel activity" aria-labelledby="fixes-title">
+              <h3 id="fixes-title">Fixes</h3>
+              <ul>
+                {d.links.map((l) => (
+                  <li key={l.url}>
+                    <span className="mark resolved" aria-hidden="true" />
+                    <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                      <a className="link" href={l.url} target="_blank" rel="noreferrer">
+                        {l.title || l.url}
+                      </a>
+                      <br />
+                      <span className="faint" title={exact(l.created_at)}>
+                        linked {relative(l.created_at)}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className="panel activity" aria-labelledby="activity-title">
             <h3 id="activity-title">Activity</h3>
             <ul>
@@ -307,9 +328,7 @@ export function Issue({ projectId, issueId }: { projectId: number; issueId: numb
                   <h3>Releases</h3>
                   <div className="issue-meta">
                     {d.releases.map((r) => (
-                      <span key={r} className="chip">
-                        {r}
-                      </span>
+                      <ReleaseChip key={r} name={r} commit={d.commits.find((c) => c.name === r)} />
                     ))}
                   </div>
                 </div>
@@ -334,5 +353,24 @@ export function Issue({ projectId, issueId }: { projectId: number; issueId: numb
         </aside>
       </div>
     </div>
+  );
+}
+
+/** A release, with the commit it was built from when CI recorded one. */
+function ReleaseChip({ name, commit }: { name: string; commit?: ReleaseCommit }) {
+  if (!commit?.commit) return <span className="chip">{name}</span>;
+  const short = commit.commit.slice(0, 7);
+  return (
+    <span className="chip" title={`Built from commit ${commit.commit}`}>
+      {name}
+      {commit.repository ? (
+        // GitHub, GitLab and Gitea all serve a commit at <repo>/commit/<sha>.
+        <a className="link mono" href={`${commit.repository}/commit/${commit.commit}`} target="_blank" rel="noreferrer" aria-label={`Commit ${short} of ${name}`}>
+          {short}
+        </a>
+      ) : (
+        <span className="mono muted">{short}</span>
+      )}
+    </span>
   );
 }

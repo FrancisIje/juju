@@ -1,5 +1,6 @@
 // Package alert tells people about new issues and regressions, through a
-// Slack incoming webhook and email.
+// Slack incoming webhook, email, and a signed JSON webhook for programs
+// (such as a job that starts an AI agent on the new issue).
 //
 // Sending happens on its own goroutines with its own queue, so a slow or
 // down Slack never delays the worker that's storing events.
@@ -8,6 +9,9 @@ package alert
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +58,7 @@ type Settings interface {
 	AlertSettings(ctx context.Context, projectID int64) (store.AlertSettings, error)
 	ProjectByID(ctx context.Context, id int64) (store.Project, error)
 	RecordDelivery(ctx context.Context, projectID int64, issueID *int64, kind, channel string, err error) error
+	ReleaseInfo(ctx context.Context, projectID int64, name string) (store.Release, error)
 }
 
 type SMTPConfig struct {
@@ -193,6 +198,9 @@ func (n *Notifier) send(ctx context.Context, a Alert, s store.AlertSettings) map
 	if s.SlackWebhookURL != "" {
 		out["slack"] = retry(func() error { return n.postSlack(ctx, s.SlackWebhookURL, a, project, link) })
 	}
+	if s.WebhookURL != "" {
+		out["webhook"] = retry(func() error { return n.postWebhook(ctx, s.WebhookURL, s.WebhookSecret, a, project, link) })
+	}
 	if len(s.EmailTo) > 0 {
 		if n.SMTP.Addr == "" {
 			out["email"] = errors.New("email isn't set up on this server (JUJU_SMTP_ADDR)")
@@ -274,6 +282,88 @@ func (n *Notifier) postSlack(ctx context.Context, webhook string, a Alert, proje
 		return fmt.Errorf("slack answered %s: %s", res.Status, strings.TrimSpace(string(b)))
 	}
 	return nil
+}
+
+// WebhookPayload is the JSON body of a webhook call. It carries what a
+// program needs to act on the issue without another request: the release's
+// commit (when CI recorded it) says which code to check out.
+type WebhookPayload struct {
+	Kind        Kind           `json:"kind"`
+	Project     WebhookProject `json:"project"`
+	Issue       WebhookIssue   `json:"issue"`
+	Release     string         `json:"release,omitempty"`
+	Environment string         `json:"environment,omitempty"`
+	Commit      string         `json:"commit,omitempty"`
+	Repository  string         `json:"repository,omitempty"`
+	SentAt      time.Time      `json:"sent_at"`
+}
+
+type WebhookProject struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type WebhookIssue struct {
+	ID      int64  `json:"id,omitempty"`
+	Title   string `json:"title"`
+	Culprit string `json:"culprit,omitempty"`
+	URL     string `json:"url"`
+}
+
+// postWebhook sends the payload signed with the project's webhook secret:
+//
+//	X-Juju-Timestamp: 1767225600
+//	X-Juju-Signature: sha256=<hex HMAC-SHA256 of "1767225600.<body>">
+//
+// The receiver recomputes the HMAC with the same secret: a match proves the
+// call came from juju and the body wasn't changed. Signing the timestamp too
+// lets it refuse old calls, so a recorded request can't be replayed later.
+func (n *Notifier) postWebhook(ctx context.Context, webhook, secret string, a Alert, project store.Project, link string) error {
+	if err := ValidateWebhookURL(webhook, n.AllowHTTPWebhooks); err != nil {
+		return err
+	}
+	p := WebhookPayload{
+		Kind:    a.Kind,
+		Project: WebhookProject{ID: a.ProjectID, Name: project.Name},
+		Issue:   WebhookIssue{ID: a.IssueID, Title: a.Title, Culprit: a.Culprit, URL: link},
+		Release: a.Release, Environment: a.Environment, SentAt: time.Now().UTC(),
+	}
+	if a.Release != "" {
+		if r, err := n.Settings.ReleaseInfo(ctx, a.ProjectID, a.Release); err == nil {
+			p.Commit, p.Repository = r.Commit, r.Repository
+		}
+	}
+	body, _ := json.Marshal(p)
+	ts := strconv.FormatInt(p.SentAt.Unix(), 10)
+	req, err := http.NewRequestWithContext(ctx, "POST", webhook, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "juju-webhook/1")
+	req.Header.Set("X-Juju-Event", string(a.Kind))
+	req.Header.Set("X-Juju-Timestamp", ts)
+	req.Header.Set("X-Juju-Signature", Sign(secret, ts, body))
+	res, err := n.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("webhook: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 200))
+		return fmt.Errorf("webhook answered %s: %s", res.Status, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// Sign is the X-Juju-Signature value for a body sent at timestamp ts.
+// Receivers can use the same function (or its three lines) to check one.
+func Sign(secret, ts string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func (n *Notifier) sendEmail(to []string, a Alert, project store.Project, link string) error {

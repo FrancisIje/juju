@@ -127,7 +127,7 @@ describe("issue page", () => {
   test("[ and ] move between events; Esc goes back to the list", async () => {
     history.replaceState(null, "", "/p/3/issues/10");
     fakeServer({
-      "GET /api/ui/projects/3/issues/10": { ...row(10, "TypeError: boom"), fingerprint: "abcdef0123456789ff", environments: ["production"], releases: ["web@1.0.0"], activity: [{ kind: "created", created_at: new Date().toISOString() }] },
+      "GET /api/ui/projects/3/issues/10": { ...row(10, "TypeError: boom"), fingerprint: "abcdef0123456789ff", environments: ["production"], releases: ["web@1.0.0"], commits: [], links: [], activity: [{ kind: "created", created_at: new Date().toISOString() }] },
       "GET /api/ui/projects/3/issues/10/events": { events: [ev(0), ev(1)] },
     });
     renderWithApp(<Issue projectId={3} issueId={10} />);

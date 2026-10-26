@@ -1,0 +1,81 @@
+# Let Claude Code fix a juju issue and open a pull request.
+#
+# Copy this file to .github/workflows/ in your app's repository and add three
+# repository secrets: ANTHROPIC_API_KEY, JUJU_URL (e.g. https://myjuju.dev),
+# JUJU_SECRET_KEY, and one variable, JUJU_PROJECT (the project id).
+#
+# It runs:
+#   - by hand (Actions → Fix a juju issue → Run workflow), for one issue id,
+#     or with no id to let the agent pick the worst unfixed issue;
+#   - on a schedule, once a day, picking an issue itself;
+#   - on a repository_dispatch "juju-issue" event, which a small relay can
+#     send when juju's webhook fires (see README.md).
+name: Fix a juju issue
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "juju issue id (empty: the agent picks one)"
+        required: false
+  schedule:
+    - cron: "17 6 * * 1-5" # weekdays 06:17 UTC
+  repository_dispatch:
+    types: [juju-issue]
+
+# One fix at a time: two runs picking the same issue would open two PRs.
+concurrency:
+  group: juju-agent-fix
+  cancel-in-progress: false
+
+permissions:
+  contents: write       # push the fix branch
+  pull-requests: write  # open the pull request
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the agent checks out the commit that crashed
+
+      # The MCP config is written outside the checkout, so the secret key
+      # can't end up in a commit.
+      - name: Connect juju over MCP
+        env:
+          JUJU_URL: ${{ secrets.JUJU_URL }}
+          JUJU_PROJECT: ${{ vars.JUJU_PROJECT }}
+          JUJU_SECRET_KEY: ${{ secrets.JUJU_SECRET_KEY }}
+        run: |
+          jq -n --arg url "$JUJU_URL/api/v1/projects/$JUJU_PROJECT/mcp" --arg auth "Bearer $JUJU_SECRET_KEY" \
+            '{mcpServers: {juju: {type: "http", url: $url, headers: {Authorization: $auth}}}}' > "$RUNNER_TEMP/mcp.json"
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --mcp-config ${{ runner.temp }}/mcp.json
+            --allowedTools "mcp__juju__list_issues,mcp__juju__get_issue,mcp__juju__list_issue_events,mcp__juju__link_issue,Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr create:*),Bash(npm test:*),Bash(npm ci:*)"
+            --max-turns 60
+          prompt: |
+            You are fixing a production crash reported by juju, using the juju MCP tools.
+
+            1. Pick the issue. If this is set, use it: "${{ inputs.issue_id || github.event.client_payload.issue.id || '' }}".
+               Otherwise call list_issues (sort "users") and take the first issue that has no linked fix
+               (check with get_issue). If none qualifies, stop and say so.
+            2. Call get_issue. Read the stack trace frames marked * (our code) and the breadcrumbs.
+               If it names the commit the release was built from, read the code as it was there
+               (`git show <commit>:<path>`), then make sure the bug still exists on the current branch.
+            3. Fix the root cause on a new branch named juju/issue-<id>, in the smallest change that does it.
+               Add or update a test that fails without the fix. Run the tests.
+            4. Commit, push, and open a pull request with `gh pr create`. Its body says what crashed
+               (the juju issue link from get_issue), why, and how the change fixes it.
+            5. Call link_issue with the pull request URL and its title.
+
+            Do not resolve the issue: a person does that after reviewing and merging.
+            If you can't find a safe fix, open no pull request; explain what you found instead.
