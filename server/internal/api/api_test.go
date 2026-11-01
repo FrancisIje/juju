@@ -14,8 +14,13 @@ import (
 )
 
 type fakeStore struct {
-	gotLimit int
-	files    []store.DebugFile
+	gotLimit  int
+	files     []store.DebugFile
+	gotFilter store.IssueFilter
+	gotUserID int64
+	status    string
+	links     []store.IssueLink
+	releases  map[string]store.Release
 }
 
 func (f *fakeStore) SaveDebugFile(_ context.Context, _ int64, d store.DebugFile) (store.DebugFile, error) {

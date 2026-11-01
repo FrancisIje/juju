@@ -17,7 +17,7 @@ import { Transaction } from "./pages/Transaction";
 /** The pages you can open without being logged in. */
 const authPage = (path: string) => path === "/login" || path === "/signup" || path.startsWith("/invite/");
 
-const settingsTabs: SettingsTab[] = ["setup", "keys", "alerts", "files", "team"];
+const settingsTabs: SettingsTab[] = ["setup", "keys", "alerts", "files", "agents", "team"];
 
 export function App() {
   const { path, query } = useLocation();

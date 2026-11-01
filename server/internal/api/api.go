@@ -1,7 +1,8 @@
-// Package api serves read endpoints for the dashboard and scripts:
+// Package api serves the secret-key API for scripts, CI and AI agents:
 //
 //	GET /api/v1/projects/{id}/issues
 //	GET /api/v1/projects/{id}/issues/{issue_id}/events
+//	... and the fix workflow in agents.go, the MCP endpoint in mcp.go.
 //
 // These use the project's *secret* key (Authorization: Bearer sk_...). The
 // public key cannot be used here: it is embedded in every app build, so
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"juju/internal/blob"
 	"juju/internal/httpx"
@@ -29,13 +31,25 @@ type Store interface {
 	ListIssueEvents(ctx context.Context, projectID, issueID int64, limit int) ([]json.RawMessage, error)
 	SaveDebugFile(ctx context.Context, projectID int64, f store.DebugFile) (store.DebugFile, error)
 	ListDebugFiles(ctx context.Context, projectID int64, release string) ([]store.DebugFile, error)
+	SearchIssues(ctx context.Context, projectID int64, f store.IssueFilter) ([]store.IssueRow, int64, error)
+	IssueDetail(ctx context.Context, projectID, issueID int64) (store.IssueDetail, error)
+	IssueEvents(ctx context.Context, projectID, issueID int64, before time.Time, limit int) ([]json.RawMessage, error)
+	SetIssueStatus(ctx context.Context, projectID int64, issueIDs []int64, status string, userID int64) (int64, error)
+	AddIssueLink(ctx context.Context, projectID, issueID int64, l store.IssueLink) (store.IssueLink, error)
+	SaveRelease(ctx context.Context, projectID int64, r store.Release) (store.Release, error)
 }
 
 type API struct {
 	Store     Store
 	Blobs     *blob.Store
 	MaxUpload int64 // bytes
-	Log       *slog.Logger
+	// PublicURL is where the dashboard is, for links in MCP answers and
+	// to tell our own origin from someone else's.
+	PublicURL string
+	// Changes is told when a key changes an issue, so open dashboards
+	// refresh. Optional.
+	Changes interface{ Changed(projectID int64) }
+	Log     *slog.Logger
 }
 
 const (
@@ -50,6 +64,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/issues/{issue_id}/events", a.authed(a.listIssueEvents))
 	mux.HandleFunc("POST /api/v1/projects/{id}/files", a.authed(a.uploadFile))
 	mux.HandleFunc("GET /api/v1/projects/{id}/files", a.authed(a.listFiles))
+	mux.HandleFunc("GET /api/v1/projects/{id}/issues/{issue_id}", a.authed(a.issueDetail))
+	mux.HandleFunc("POST /api/v1/projects/{id}/issues/{issue_id}/status", a.authed(a.setStatus))
+	mux.HandleFunc("POST /api/v1/projects/{id}/issues/{issue_id}/links", a.authed(a.addLink))
+	mux.HandleFunc("POST /api/v1/projects/{id}/releases", a.authed(a.saveRelease))
+	mux.HandleFunc("POST /api/v1/projects/{id}/mcp", a.authed(a.mcp))
 }
 
 type projectHandler func(w http.ResponseWriter, r *http.Request, projectID int64)

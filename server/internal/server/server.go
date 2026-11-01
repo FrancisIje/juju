@@ -92,7 +92,13 @@ func Routes(d Deps) http.Handler {
 		})
 	}
 	if roles.API {
-		(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, Log: log}).Register(mux)
+		// The same "an issue changed" signal the dashboard sends, so a status
+		// change from a script or agent shows up in open dashboards too.
+		var changes interface{ Changed(projectID int64) } = d.Changes
+		if changes == nil && d.Live != nil {
+			changes = d.Live
+		}
+		(&api.API{Store: st, Blobs: blobs, MaxUpload: maxUpload, PublicURL: d.Config.PublicURL, Changes: changes, Log: log}).Register(mux)
 		(&ui.API{Store: st, Auth: d.Auth, Alerts: d.Alerts, Live: d.Live, Changes: d.Changes, Analytics: d.Analytics, PublicURL: d.Config.PublicURL, AllowSignup: d.Config.AllowSignup, TrustedProxies: d.Config.TrustedProxies, Log: log}).Register(mux)
 	}
 	// An unknown /api/ path must be a JSON 404, not the app's HTML. On an

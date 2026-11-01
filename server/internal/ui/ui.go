@@ -428,13 +428,19 @@ func (a *API) setStatus(w http.ResponseWriter, r *http.Request, pid int64, u sto
 // alertsView hides most of the webhook URL: it works like a password, since
 // anyone who has it can post into the channel.
 type alertsView struct {
-	SlackWebhookSet  bool             `json:"slack_webhook_set"`
-	SlackWebhookHint string           `json:"slack_webhook_hint"`
-	EmailTo          []string         `json:"email_to"`
-	OnNewIssue       bool             `json:"on_new_issue"`
-	OnRegression     bool             `json:"on_regression"`
-	EmailAvailable   bool             `json:"email_available"`
-	Deliveries       []store.Delivery `json:"deliveries"`
+	SlackWebhookSet  bool     `json:"slack_webhook_set"`
+	SlackWebhookHint string   `json:"slack_webhook_hint"`
+	EmailTo          []string `json:"email_to"`
+	OnNewIssue       bool     `json:"on_new_issue"`
+	OnRegression     bool     `json:"on_regression"`
+	EmailAvailable   bool     `json:"email_available"`
+	// The generic webhook's URL is shown in full: it's an address of the
+	// user's own receiver, which checks the signature, so knowing it isn't
+	// enough to post a fake alert. The signing secret is: it's returned
+	// only in the response that created it, like the project secret key.
+	WebhookURL    string           `json:"webhook_url"`
+	WebhookSecret string           `json:"webhook_secret,omitempty"`
+	Deliveries    []store.Delivery `json:"deliveries"`
 }
 
 func (a *API) alertsView(ctx context.Context, pid int64) (alertsView, error) {
@@ -449,7 +455,7 @@ func (a *API) alertsView(ctx context.Context, pid int64) (alertsView, error) {
 	if d == nil {
 		d = []store.Delivery{}
 	}
-	v := alertsView{SlackWebhookSet: s.SlackWebhookURL != "", EmailTo: s.EmailTo, OnNewIssue: s.OnNewIssue, OnRegression: s.OnRegression, EmailAvailable: a.Alerts.SMTP.Addr != "", Deliveries: d}
+	v := alertsView{SlackWebhookSet: s.SlackWebhookURL != "", EmailTo: s.EmailTo, OnNewIssue: s.OnNewIssue, OnRegression: s.OnRegression, EmailAvailable: a.Alerts.SMTP.Addr != "", WebhookURL: s.WebhookURL, Deliveries: d}
 	if v.SlackWebhookSet {
 		v.SlackWebhookHint = "…" + s.SlackWebhookURL[max(0, len(s.SlackWebhookURL)-4):]
 	}
@@ -471,6 +477,11 @@ type alertsUpdate struct {
 	EmailTo         []string `json:"email_to"`
 	OnNewIssue      bool     `json:"on_new_issue"`
 	OnRegression    bool     `json:"on_regression"`
+	// nil keeps the saved webhook; "" removes it (and its secret).
+	WebhookURL *string `json:"webhook_url"`
+	// RotateWebhookSecret makes a new signing secret; the old one stops
+	// matching at once.
+	RotateWebhookSecret bool `json:"rotate_webhook_secret"`
 }
 
 func (a *API) putAlerts(w http.ResponseWriter, r *http.Request, pid int64, _ store.User) {
@@ -483,7 +494,27 @@ func (a *API) putAlerts(w http.ResponseWriter, r *http.Request, pid int64, _ sto
 		a.fail(w, "load alerts", err)
 		return
 	}
-	next := store.AlertSettings{SlackWebhookURL: cur.SlackWebhookURL, OnNewIssue: req.OnNewIssue, OnRegression: req.OnRegression}
+	next := store.AlertSettings{SlackWebhookURL: cur.SlackWebhookURL, OnNewIssue: req.OnNewIssue, OnRegression: req.OnRegression, WebhookURL: cur.WebhookURL, WebhookSecret: cur.WebhookSecret}
+	if req.WebhookURL != nil {
+		next.WebhookURL = strings.TrimSpace(*req.WebhookURL)
+		if next.WebhookURL != "" {
+			if err := alert.ValidateWebhookURL(next.WebhookURL, a.Alerts.AllowHTTPWebhooks); err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
+	}
+	newSecret := ""
+	switch {
+	case next.WebhookURL == "":
+		next.WebhookSecret = ""
+	case next.WebhookSecret == "" || req.RotateWebhookSecret:
+		if newSecret, err = store.NewWebhookSecret(); err != nil {
+			a.fail(w, "webhook secret", err)
+			return
+		}
+		next.WebhookSecret = newSecret
+	}
 	if req.SlackWebhookURL != nil {
 		next.SlackWebhookURL = strings.TrimSpace(*req.SlackWebhookURL)
 		if next.SlackWebhookURL != "" {
@@ -512,7 +543,13 @@ func (a *API) putAlerts(w http.ResponseWriter, r *http.Request, pid int64, _ sto
 		a.fail(w, "save alerts", err)
 		return
 	}
-	a.getAlerts(w, r, pid, store.User{})
+	v, err := a.alertsView(r.Context(), pid)
+	if err != nil {
+		a.fail(w, "load alerts", err)
+		return
+	}
+	v.WebhookSecret = newSecret
+	httpx.WriteJSON(w, http.StatusOK, v)
 }
 
 func (a *API) testAlerts(w http.ResponseWriter, r *http.Request, pid int64, _ store.User) {
@@ -521,8 +558,8 @@ func (a *API) testAlerts(w http.ResponseWriter, r *http.Request, pid int64, _ st
 		a.fail(w, "load alerts", err)
 		return
 	}
-	if s.SlackWebhookURL == "" && len(s.EmailTo) == 0 {
-		httpx.WriteError(w, http.StatusBadRequest, "add a Slack webhook or an email address first")
+	if s.SlackWebhookURL == "" && len(s.EmailTo) == 0 && s.WebhookURL == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "add a Slack webhook, a webhook or an email address first")
 		return
 	}
 	if key := strconv.FormatInt(pid, 10); !a.alertTests.Allow(key) {

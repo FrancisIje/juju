@@ -382,10 +382,13 @@ func (s *Store) CountIssues(ctx context.Context, projectID int64) (IssueCounts, 
 
 type IssueDetail struct {
 	IssueRow
-	Fingerprint  string     `json:"fingerprint"`
-	Environments []string   `json:"environments"`
-	Releases     []string   `json:"releases"`
-	Activity     []Activity `json:"activity"`
+	Fingerprint  string   `json:"fingerprint"`
+	Environments []string `json:"environments"`
+	Releases     []string `json:"releases"`
+	// Commits are the recorded commits of Releases, for those CI recorded.
+	Commits  []Release   `json:"commits"`
+	Links    []IssueLink `json:"links"`
+	Activity []Activity  `json:"activity"`
 }
 
 type Activity struct {
@@ -421,6 +424,12 @@ func (s *Store) IssueDetail(ctx context.Context, projectID, issueID int64) (Issu
 	}
 	d.Releases, err = s.distinct(ctx, `SELECT release FROM events WHERE issue_id = $1 AND release <> '' GROUP BY release ORDER BY max(timestamp) DESC LIMIT 10`, issueID)
 	if err != nil {
+		return d, err
+	}
+	if d.Commits, err = s.releaseCommits(ctx, projectID, d.Releases); err != nil {
+		return d, err
+	}
+	if d.Links, err = s.issueLinks(ctx, issueID); err != nil {
 		return d, err
 	}
 	rows, err := s.pool.Query(ctx, `
@@ -504,6 +513,8 @@ type AlertSettings struct {
 	EmailTo         []string  `json:"email_to"`
 	OnNewIssue      bool      `json:"on_new_issue"`
 	OnRegression    bool      `json:"on_regression"`
+	WebhookURL      string    `json:"webhook_url"`
+	WebhookSecret   string    `json:"webhook_secret"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
@@ -512,9 +523,9 @@ type AlertSettings struct {
 func (s *Store) AlertSettings(ctx context.Context, projectID int64) (AlertSettings, error) {
 	a := AlertSettings{OnNewIssue: true, OnRegression: true, EmailTo: []string{}}
 	err := s.pool.QueryRow(ctx, `
-		SELECT slack_webhook_url, email_to, on_new_issue, on_regression, updated_at
+		SELECT slack_webhook_url, email_to, on_new_issue, on_regression, webhook_url, webhook_secret, updated_at
 		FROM alert_settings WHERE project_id = $1`, projectID).
-		Scan(&a.SlackWebhookURL, &a.EmailTo, &a.OnNewIssue, &a.OnRegression, &a.UpdatedAt)
+		Scan(&a.SlackWebhookURL, &a.EmailTo, &a.OnNewIssue, &a.OnRegression, &a.WebhookURL, &a.WebhookSecret, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil
 	}
@@ -526,12 +537,13 @@ func (s *Store) SaveAlertSettings(ctx context.Context, projectID int64, a AlertS
 		a.EmailTo = []string{}
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO alert_settings (project_id, slack_webhook_url, email_to, on_new_issue, on_regression, updated_at)
-		VALUES ($1, $2, $3, $4, $5, now())
+		INSERT INTO alert_settings (project_id, slack_webhook_url, email_to, on_new_issue, on_regression, webhook_url, webhook_secret, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, now())
 		ON CONFLICT (project_id) DO UPDATE SET
 			slack_webhook_url = EXCLUDED.slack_webhook_url, email_to = EXCLUDED.email_to,
-			on_new_issue = EXCLUDED.on_new_issue, on_regression = EXCLUDED.on_regression, updated_at = now()`,
-		projectID, a.SlackWebhookURL, a.EmailTo, a.OnNewIssue, a.OnRegression)
+			on_new_issue = EXCLUDED.on_new_issue, on_regression = EXCLUDED.on_regression,
+			webhook_url = EXCLUDED.webhook_url, webhook_secret = EXCLUDED.webhook_secret, updated_at = now()`,
+		projectID, a.SlackWebhookURL, a.EmailTo, a.OnNewIssue, a.OnRegression, a.WebhookURL, a.WebhookSecret)
 	return err
 }
 

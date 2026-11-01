@@ -116,10 +116,27 @@ export interface Activity {
   created_at: string;
 }
 
+/** The git commit a release was built from, recorded by `juju release` in CI. */
+export interface ReleaseCommit {
+  name: string;
+  commit: string;
+  repository: string;
+  updated_at: string;
+}
+
+/** A link attached to an issue, usually the pull request fixing it. */
+export interface IssueLink {
+  url: string;
+  title: string;
+  created_at: string;
+}
+
 export interface IssueDetail extends IssueRow {
   fingerprint: string;
   environments: string[];
   releases: string[];
+  commits: ReleaseCommit[];
+  links: IssueLink[];
   activity: Activity[];
 }
 
@@ -163,6 +180,9 @@ export interface AlertsView {
   on_new_issue: boolean;
   on_regression: boolean;
   email_available: boolean;
+  webhook_url: string;
+  /** Only in the response that created it: shown once, like the secret key. */
+  webhook_secret?: string;
   deliveries: { id: number; issue_id: number | null; kind: string; channel: string; ok: boolean; error: string; created_at: string }[];
 }
 

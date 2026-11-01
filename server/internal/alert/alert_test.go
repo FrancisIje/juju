@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,13 @@ func (f *fakeSettings) RecordDelivery(_ context.Context, _ int64, _ *int64, kind
 	}
 	f.deliveries = append(f.deliveries, kind+"/"+channel+"/"+status)
 	return nil
+}
+
+func (f *fakeSettings) ReleaseInfo(_ context.Context, _ int64, name string) (store.Release, error) {
+	if name != "web@2.3.1" {
+		return store.Release{}, store.ErrNotFound
+	}
+	return store.Release{Name: name, Commit: "3f2a9c1d", Repository: "https://github.com/acme/web"}, nil
 }
 
 func (f *fakeSettings) recorded() []string {
@@ -351,5 +359,73 @@ func TestAlertsPerProjectAreCapped(t *testing.T) {
 	n.Stop()
 	if got := len(received()); got != MaxAlertsPerHour+1 {
 		t.Errorf("slack got %d messages, want %d for project 7 and 1 for project 8", got, MaxAlertsPerHour+1)
+	}
+}
+
+// The generic webhook is for programs: it must carry the commit (so an agent
+// can check out the code that crashed) and a signature the receiver can check.
+func TestWebhookIsSignedAndCarriesTheCommit(t *testing.T) {
+	type call struct {
+		body             []byte
+		ts, sig, eventHd string
+	}
+	got := make(chan call, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- call{b, r.Header.Get("X-Juju-Timestamp"), r.Header.Get("X-Juju-Signature"), r.Header.Get("X-Juju-Event")}
+	}))
+	t.Cleanup(srv.Close)
+	s := &fakeSettings{settings: store.AlertSettings{WebhookURL: srv.URL, WebhookSecret: "whsec_test", OnRegression: true}}
+	n := notifier(s)
+	n.Start(1)
+	n.IssueEvent(regression())
+	n.Stop()
+
+	c := <-got
+	if want := Sign("whsec_test", c.ts, c.body); c.sig != want {
+		t.Errorf("signature %q, want %q", c.sig, want)
+	}
+	if Sign("whsec_other", c.ts, c.body) == c.sig {
+		t.Error("a different secret gives the same signature")
+	}
+	if c.eventHd != "regression" {
+		t.Errorf("X-Juju-Event = %q", c.eventHd)
+	}
+	var p WebhookPayload
+	if err := json.Unmarshal(c.body, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Kind != Regression || p.Issue.ID != 42 || p.Issue.URL != "https://juju.example.com/p/7/issues/42" || p.Project.Name != "shop-web" {
+		t.Errorf("payload = %+v", p)
+	}
+	if p.Commit != "3f2a9c1d" || p.Repository != "https://github.com/acme/web" || p.Release != "web@2.3.1" {
+		t.Errorf("payload has no commit: %+v", p)
+	}
+	if ts, _ := strconv.ParseInt(c.ts, 10, 64); ts != p.SentAt.Unix() {
+		t.Errorf("timestamp header %s doesn't match sent_at %v", c.ts, p.SentAt)
+	}
+	if got := s.recorded(); len(got) != 1 || got[0] != "regression/webhook/ok" {
+		t.Errorf("deliveries = %v", got)
+	}
+}
+
+// A release CI never recorded still alerts, just without a commit.
+func TestWebhookWithoutRecordedRelease(t *testing.T) {
+	got := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- b
+	}))
+	t.Cleanup(srv.Close)
+	s := &fakeSettings{settings: store.AlertSettings{WebhookURL: srv.URL, WebhookSecret: "whsec_test", OnNewIssue: true}}
+	n := notifier(s)
+	n.Start(1)
+	e, fp, res := regression()
+	e.Release, res.Regressed = "web@9.9.9", false
+	n.IssueEvent(e, fp, res)
+	n.Stop()
+	b := <-got
+	if strings.Contains(string(b), `"commit"`) {
+		t.Errorf("payload has a commit for an unrecorded release: %s", b)
 	}
 }
