@@ -1,12 +1,20 @@
 package analytics
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"juju/internal/event"
+	"juju/internal/queue"
 )
 
 func TestOSAndBrowserFromContext(t *testing.T) {
@@ -36,26 +44,128 @@ func TestOSAndBrowserFromContext(t *testing.T) {
 
 func ua(s string) map[string]any { return map[string]any{"browser": map[string]any{"user_agent": s}} }
 
-// With ClickHouse down, the writer holds at most MaxPending events and
-// drops the oldest, so memory stays bounded however long the outage lasts.
-func TestWriterBoundsWhatItHolds(t *testing.T) {
-	w := &Writer{Client: &Client{URL: "http://127.0.0.1:1"}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), FlushEvery: time.Hour, BatchSize: 1 << 20, MaxPending: 5}
-	w.Start()
-	for range 12 {
-		w.Add(&event.Event{Type: event.TypeEvent, Name: "x", DistinctID: "a", Time: time.Now(), ReceivedAt: time.Now()})
+// fakeDelivery records what the writer decided, in order.
+type fakeDelivery struct {
+	e   *event.Event
+	log *[]string
+	mu  *sync.Mutex
+}
+
+func (d *fakeDelivery) note(s string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	*d.log = append(*d.log, s+" "+d.e.Name)
+}
+func (d *fakeDelivery) Event() *event.Event   { return d.e }
+func (d *fakeDelivery) Attempt() int          { return 1 }
+func (d *fakeDelivery) Ack()                  { d.note("ack") }
+func (d *fakeDelivery) Retry(_ time.Duration) { d.note("retry") }
+func (d *fakeDelivery) Dead(_ string)         { d.note("dead") }
+
+type fakeSource struct{ ch chan queue.Delivery }
+
+func (s fakeSource) Deliveries() <-chan queue.Delivery { return s.ch }
+
+// runWriter sends the named events through a Writer against a fake ClickHouse
+// and returns what happened, inserts and decisions in one timeline.
+func runWriter(t *testing.T, names []string, respond func(body string) int) []string {
+	t.Helper()
+	var mu sync.Mutex
+	var timeline []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		code := respond(string(raw))
+		mu.Lock()
+		timeline = append(timeline, fmt.Sprintf("insert %d: %d rows", code, strings.Count(string(raw), "\n")))
+		mu.Unlock()
+		w.WriteHeader(code)
+	}))
+	defer srv.Close()
+	src := fakeSource{ch: make(chan queue.Delivery, len(names))}
+	for _, n := range names {
+		src.ch <- &fakeDelivery{e: &event.Event{EventID: "e-" + n, Type: event.TypeEvent, Name: n, DistinctID: "a", Time: time.Now(), ReceivedAt: time.Now()}, log: &timeline, mu: &mu}
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for w.Dropped() < 7 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	close(src.ch)
+	w := &Writer{Client: &Client{URL: srv.URL}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), FlushEvery: time.Hour}
+	w.Start(src)
+	w.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	return timeline
+}
+
+// The whole point: acknowledging first is how a crash lost accepted events.
+func TestWriterAcknowledgesOnlyAfterClickHouseHasTheEvents(t *testing.T) {
+	got := runWriter(t, []string{"a", "b"}, func(string) int { return 200 })
+	want := []string{"insert 200: 2 rows", "ack a", "ack b"}
+	if !slices.Equal(got, want) {
+		t.Errorf("timeline = %q, want %q", got, want)
 	}
-	if w.Dropped() != 7 {
-		t.Fatalf("dropped %d, want 7 (12 added, 5 kept)", w.Dropped())
+}
+
+// Down or overloaded: nothing is acknowledged, everything goes back.
+func TestWriterGivesBackTheBatchWhenClickHouseFails(t *testing.T) {
+	for _, code := range []int{500, 503, 404} { // 404: the table isn't created yet
+		got := runWriter(t, []string{"a", "b"}, func(string) int { return code })
+		want := []string{fmt.Sprintf("insert %d: 2 rows", code), "retry a", "retry b"}
+		if !slices.Equal(got, want) {
+			t.Errorf("%d: timeline = %q, want %q", code, got, want)
+		}
 	}
+}
+
+// One row ClickHouse refuses must not block the rest, now or after a restart.
+func TestWriterSetsAsideOnlyTheRowClickHouseRefuses(t *testing.T) {
+	got := runWriter(t, []string{"a", "bad", "c", "d"}, func(body string) int {
+		if strings.Contains(body, `"bad"`) {
+			return 400
+		}
+		return 200
+	})
+	var settled []string
+	for _, s := range got {
+		if !strings.HasPrefix(s, "insert") {
+			settled = append(settled, s)
+		}
+	}
+	slices.Sort(settled)
+	if want := []string{"ack a", "ack c", "ack d", "dead bad"}; !slices.Equal(settled, want) {
+		t.Errorf("settled = %q, want %q (timeline %q)", settled, want, got)
+	}
+}
+
+// ClickHouse failing part-way through splitting: bad data set aside, the rest
+// retried, never acknowledged unwritten.
+func TestWriterSplitDuringAnOutageLosesNothing(t *testing.T) {
+	var calls atomic.Int32
+	got := runWriter(t, []string{"a", "b"}, func(string) int {
+		if calls.Add(1) == 1 {
+			return 400
+		}
+		return 503
+	})
+	if want := []string{"insert 400: 2 rows", "insert 503: 1 rows", "retry a", "insert 503: 1 rows", "retry b"}; !slices.Equal(got, want) {
+		t.Errorf("timeline = %q, want %q", got, want)
+	}
+}
+
+// Stopping with ClickHouse unreachable must end promptly, handing events back.
+func TestWriterStopsWhenClickHouseIsUnreachable(t *testing.T) {
+	var mu sync.Mutex
+	var log []string
+	src := fakeSource{ch: make(chan queue.Delivery, 1)}
+	src.ch <- &fakeDelivery{e: &event.Event{EventID: "e", Type: event.TypeEvent, Name: "x", DistinctID: "a", Time: time.Now(), ReceivedAt: time.Now()}, log: &log, mu: &mu}
+	close(src.ch)
+	w := &Writer{Client: &Client{URL: "http://127.0.0.1:1"}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), FlushEvery: time.Hour}
+	w.Start(src)
 	done := make(chan struct{})
-	go func() { w.Stop(); close(done) }()
+	go func() { w.Wait(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(15 * time.Second):
-		t.Fatal("Stop hung with ClickHouse unreachable")
+		t.Fatal("Wait hung with ClickHouse unreachable")
+	}
+	if !slices.Equal(log, []string{"retry x"}) {
+		t.Errorf("decisions = %q, want the event handed back", log)
 	}
 }

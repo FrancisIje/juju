@@ -342,12 +342,35 @@ func TestSessionWritesAreRetried(t *testing.T) {
 type recordingAnalytics struct {
 	mu    sync.Mutex
 	names []string
+	err   error
 }
 
-func (a *recordingAnalytics) Add(e *event.Event) {
+func (a *recordingAnalytics) Publish(_ context.Context, events []*event.Event) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.names = append(a.names, e.Name)
+	if a.err != nil {
+		return a.err
+	}
+	for _, e := range events {
+		a.names = append(a.names, e.Name)
+	}
+	return nil
+}
+
+// An analytics event left in the main stream (queued before the upgrade) is
+// acknowledged only once it's safely in its own stream.
+func TestLeftoverAnalyticsEventRetriedIfItCantBeMoved(t *testing.T) {
+	ch := queue.NewChan(4)
+	if err := ch.Publish(context.Background(), []*event.Event{{EventID: "a", Type: event.TypeEvent, Name: "signed_up", DistinctID: "u"}}); err != nil {
+		t.Fatal(err)
+	}
+	dl := <-ch.Deliveries()
+	rec := &recordingAnalytics{err: errors.New("queue unavailable")}
+	handle(context.Background(), dl, Deps{Store: &fakeStore{}, Analytics: rec, Log: quiet})
+	again := <-ch.Deliveries() // back from Retry, after its delay
+	if again.Attempt() != 2 {
+		t.Errorf("attempt = %d, want 2", again.Attempt())
+	}
 }
 
 // Analytics events go to ClickHouse, never to issues: no fingerprint, no

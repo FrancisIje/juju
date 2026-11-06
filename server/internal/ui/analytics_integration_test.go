@@ -21,6 +21,7 @@ import (
 	"juju/internal/analytics"
 	"juju/internal/auth"
 	"juju/internal/config"
+	"juju/internal/queue"
 	"juju/internal/server"
 	"juju/internal/store"
 	"juju/internal/worker"
@@ -37,11 +38,15 @@ func TestAnalyticsEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ch.Exec(context.Background(), "DROP DATABASE IF EXISTS "+ch.Database) })
+	q, err := queue.OpenJetStream(ctx, queue.JetStreamConfig{Dir: t.TempDir(), Analytics: true, Log: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
 	writer := &analytics.Writer{Client: ch, Log: log, FlushEvery: 50 * time.Millisecond}
-	writer.Start()
-	q := newQueue(t)
-	go worker.Run(context.Background(), q, worker.Deps{Store: st, Analytics: writer, Log: log}, 2)
-	t.Cleanup(func() { q.StopDeliveries(); writer.Stop() })
+	writer.Start(q.Analytics())
+	go worker.Run(context.Background(), q, worker.Deps{Store: st, Analytics: q, Log: log}, 2)
+	t.Cleanup(func() { q.StopDeliveries(); q.StopAnalytics(); writer.Wait() })
 
 	deps := server.Deps{Pool: pool, Store: st, Queue: q, MaxUpload: 1 << 20, Auth: &auth.Service{Store: st}, Alerts: &alert.Notifier{Settings: st, Log: log}, Analytics: ch, Config: config.Config{PublicURL: "http://juju.test"}, Log: log}
 	srv := httptest.NewServer(server.Routes(deps))

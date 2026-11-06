@@ -269,6 +269,7 @@ $ <span class="c"># 100 events (the burst), then 5 more right away, then 5 after
           <tr><td class="mono">JUJU_ANALYTICS_RETENTION_DAYS</td><td class="mono">365</td><td>analytics events in ClickHouse; 0 keeps them</td></tr>
           <tr><td class="mono">JUJU_SCRUB_PII</td><td class="mono">true</td><td>false stores events exactly as sent</td></tr>
           <tr><td class="mono">JUJU_QUEUE_MAX_MB</td><td class="mono">1024</td><td>queue size on disk; past it, ingest answers 429</td></tr>
+          <tr><td class="mono">JUJU_ANALYTICS_QUEUE_MAX_MB</td><td class="mono">512</td><td>analytics events waiting for ClickHouse; past it, the oldest are dropped and ingest keeps answering</td></tr>
           <tr><td class="mono">JUJU_ROLES</td><td class="mono">ingest,worker,api</td><td>which parts this process runs</td></tr>
           <tr><td class="mono">JUJU_NATS_URL</td><td class="mono">(embedded)</td><td>a shared NATS JetStream; needed to split roles</td></tr>
           <tr><td class="mono">JUJU_TRUSTED_PROXIES</td><td class="mono">127.0.0.1,::1</td><td>proxies whose <code>X-Forwarded-For</code> is believed, so login and sign-up limits see each visitor's real address</td></tr>
@@ -310,7 +311,7 @@ Juju.init(JujuOptions(dsn: dsn, sampleRate: 0.25))       <span class="c">// Flut
       <div class="fix"><span class="mono">sessions that never became healthy</span><p>The Phase 8 end-to-end test timed out. Fields the server computes (a session's start, a transaction's start) are marked <code>json:"-"</code>, so they vanished in the JSON trip through the queue. The old channel passed Go objects and hid it. Now they're rebuilt after the queue, and a test compares every field before and after.</p></div>
       <div class="fix"><span class="mono">tokens spent twice</span><p>A batch the queue refused still used up its rate-limit tokens, though the SDK would resend it. The test's <code>Retry-After: 3</code> instead of <code>1</code> showed it. Refused batches now give their tokens back.</p></div>
       <div class="fix"><span class="mono">503 during a database outage</span><p>The first outage test got <code>503</code>: checking the project key needed Postgres, which defeated the point of the queue. The cache now serves the last known project when Postgres can't be reached.</p></div>
-      <div class="fix"><span class="mono">"insufficient storage"</span><p>JetStream reserves each stream's full size up front, so the dead-letter stream didn't fit next to the main one. The store limit now covers both.</p></div>
+      <div class="fix"><span class="mono">"insufficient storage"</span><p>JetStream reserves each stream's full size up front, so the dead-letter stream didn't fit next to the main one. The overall store limit is now only a high ceiling, and each stream's own limit is the real one, so lowering a limit can't stop the server from starting either.</p></div>
     </div>
   </section>
 

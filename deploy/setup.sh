@@ -94,6 +94,7 @@ JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123
 #JUJU_TRUSTED_PROXIES=127.0.0.1,::1 # proxies whose X-Forwarded-For is believed (Caddy)
 # The event queue is embedded and kept in JUJU_DATA_DIR/queue (max 1 GB).
 #JUJU_QUEUE_MAX_MB=1024
+#JUJU_ANALYTICS_QUEUE_MAX_MB=512   # analytics waiting for ClickHouse; past it, the oldest are dropped
 EOF
 fi
 # Servers set up before analytics existed: turn it on, once.

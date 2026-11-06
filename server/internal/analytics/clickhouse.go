@@ -95,10 +95,20 @@ func (c *Client) doIn(ctx context.Context, db, query string, params map[string]s
 		if len(msg) > 500 {
 			msg = msg[:500]
 		}
-		return nil, fmt.Errorf("clickhouse: %s: %s", res.Status, msg)
+		return nil, &ResponseError{Code: res.StatusCode, Status: res.Status, Msg: msg}
 	}
 	return out, nil
 }
+
+// ResponseError is ClickHouse answering with a failure, as opposed to not
+// answering at all.
+type ResponseError struct {
+	Code   int
+	Status string
+	Msg    string
+}
+
+func (e *ResponseError) Error() string { return "clickhouse: " + e.Status + ": " + e.Msg }
 
 // Exec runs a statement that returns nothing (CREATE, ALTER).
 func (c *Client) Exec(ctx context.Context, query string) error {

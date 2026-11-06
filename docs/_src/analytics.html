@@ -134,15 +134,17 @@ footer { color: var(--muted); font-size: 0.9rem; }
 flowchart LR
   A["capture('checkout_started')"] --> Q[SDK queue<br/>batched, retried, kept offline]
   Q --> I[POST /api/v1/.../events<br/>same endpoint as errors]
-  I --> W[worker]
-  W -- "type: error" --> P[(Postgres<br/>issues)]
-  W -- "type: event / identify" --> B[writer<br/>batches every second]
-  B --> C[(ClickHouse<br/>events, person_aliases)]
+  I -- "type: error" --> E[error queue<br/>on disk]
+  E --> W[worker]
+  W --> P[(Postgres<br/>issues)]
+  I -- "type: event / identify" --> A[analytics queue<br/>on disk]
+  A --> B[writer<br/>batches every second]
+  B -- "acknowledged after the insert" --> C[(ClickHouse<br/>events, person_aliases)]
   C --> D[Analytics page<br/>trends · funnels · retention]
 </pre>
-    <p>Analytics events travel the same path as errors up to the worker: the same SDK queue (batching, retry with backoff, saved across app restarts), the same envelope and endpoint, the same key check. The worker sends them to a writer instead of the issue store. The writer inserts into ClickHouse in batches, at most once a second.</p>
+    <p>Analytics events travel the same path as errors up to ingest: the same SDK queue (batching, retry with backoff, saved across app restarts), the same envelope and endpoint, the same key check. Ingest then puts them in their own durable queue. A writer reads that queue and inserts into ClickHouse in batches, at most once a second.</p>
     <div class="why"><span class="label">Why ClickHouse, not Postgres</span>Analytics events outnumber errors by 100× or more, and the questions are always "count these over time, grouped by that". ClickHouse stores each column separately and compressed, so a trend reads only the timestamp, name and breakdown columns. Postgres reads whole rows. Postgres still keeps everything else: users, projects, issues.</div>
-    <div class="why"><span class="label">Why analytics is optional</span>Without <code>JUJU_CLICKHOUSE_URL</code>, juju works exactly as before and the Analytics page says how to turn it on. Nobody should need a second database to track crashes, and if ClickHouse goes down, errors keep flowing: the writer retries with backoff and holds up to 100,000 events.</div>
+    <div class="why"><span class="label">Why analytics is optional</span>Without <code>JUJU_CLICKHOUSE_URL</code>, juju works exactly as before and the Analytics page says how to turn it on. Nobody should need a second database to track crashes, and if ClickHouse goes down, errors keep flowing: analytics events wait on disk and are written once it's back.</div>
   </section>
 
   <section>
@@ -163,7 +165,19 @@ flowchart LR
     </div>
     <div class="block">
       <h3>Errors come first</h3>
-      <p>The SDK queue keeps up to 1,000 analytics events but counts them separately from errors (100), so a burst of tracking can never push a crash report out. On the server, analytics never touches issues: an event can't become an issue even if it carries an exception.</p>
+      <p>The SDK queue keeps up to 1,000 analytics events but counts them separately from errors (100), so a burst of tracking can never push a crash report out. On the server, analytics never touches issues: an event can't become an issue even if it carries an exception. Analytics also has its own queue on disk, so a ClickHouse outage's worth of clicks can't take the space errors need.</p>
+    </div>
+    <div class="block">
+      <h3>Acknowledged only after ClickHouse has it</h3>
+      <p>Events used to leave the durable queue when they reached the writer's memory, then wait for the next insert. A <code>kill -9</code> under load lost 1,987 of 52,360 accepted events, and all of them when ClickHouse was also down. Now an event stays queued until the insert succeeds. A crash can make the queue deliver some again, which is safe: the table merges rows with the same <code>event_id</code>, and counts use <code>uniqExact(event_id)</code>, so a repeat counts once.</p>
+    </div>
+    <div class="block">
+      <h3>When the queue is full, the oldest clicks go</h3>
+      <p>The analytics queue is capped by <code>JUJU_ANALYTICS_QUEUE_MAX_MB</code> (512). Past that, the oldest analytics events are dropped, the opposite of the error queue, which refuses new events so the SDK retries. Nobody should be turned away over counting clicks while ClickHouse is down.</p>
+    </div>
+    <div class="block">
+      <h3>One bad row can't block the rest</h3>
+      <p>With durable delivery, a row ClickHouse always refuses would come back forever and hold up everything behind it. When ClickHouse answers "bad data" (HTTP 400), the writer halves the batch until the row is alone, writes the rest, and keeps that row in the dead-letter stream for a week. Any other failure is treated as temporary and retried for as long as it takes.</p>
     </div>
     <div class="block">
       <h3>Values go in as parameters</h3>
@@ -205,6 +219,13 @@ JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123 make dev
           <tr><td>Dashboard, checkout_started by platform</td><td colspan="2" class="mono">Flutter 3 · Web 3 · React Native 2 (38% · 38% · 25%), People: 1 each, by OS: Android 5 · macOS 3</td></tr>
           <tr><td>Funnel started → completed</td><td colspan="2" class="mono">3 people → 2 people (67%), 1 dropped off</td></tr>
           <tr><td>End-to-end test, fresh server</td><td colspan="2" class="mono">onboarding before the first event → exact breakdown → funnel; also runs in CI</td></tr>
+          <tr><td>kill -9 mid-flood, ClickHouse up</td><td colspan="2" class="mono">before: 1,987 of 52,360 lost · after: 0 of 71,500 lost, dashboard counts 71,500</td></tr>
+          <tr><td>kill -9 with ClickHouse down</td><td colspan="2" class="mono">before: 0 of 50 stored · after: 50 of 50</td></tr>
+          <tr><td>Clean stop with ClickHouse down</td><td colspan="2" class="mono">50 of 50 stored after restart; stop took 0.1 s</td></tr>
+          <tr><td>35 s outage with 5,000 events</td><td colspan="2" class="mono">5,000 of 5,000 stored; an error sent during the outage was stored at once; juju's memory 62 MB</td></tr>
+          <tr><td>12,000 events into a 1 MB queue, ClickHouse down</td><td colspan="2" class="mono">every request 202; newest 2,316 kept, oldest dropped; error tracking unaffected</td></tr>
+          <tr><td>Upgrade, 200 events left in the old queue</td><td colspan="2" class="mono">200 of 200 moved across and stored, original times kept</td></tr>
+          <tr><td>30,000 events, last 202 to queryable</td><td colspan="2" class="mono">0.6 s (1.3 s before the change, same laptop)</td></tr>
         </tbody>
       </table>
     </div>
@@ -216,6 +237,9 @@ JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123 make dev
       <div class="fix"><span class="mono">last login would win</span><p>A table type that keeps the newest row would have moved history after a merge. Links now keep the first.</p></div>
       <div class="fix"><span class="mono">test servers left running</span><p>ClickHouse's watchdog forks the real server, so stopping one process left it running and the test run hung. Tests now stop the whole process group.</p></div>
       <div class="fix"><span class="mono">axis labels overlapping</span><p>On a phone, the last two dates ran into each other. A label too close to the last one is now skipped.</p></div>
+      <div class="fix"><span class="mono">accepted events lost in a crash</span><p>Events were acknowledged on reaching memory, not ClickHouse. They now stay queued until the insert succeeds.</p></div>
+      <div class="fix"><span class="mono">lowering a limit stopped the server</span><p>Reducing a queue limit made the storage budget smaller than what existing streams had reserved, so juju wouldn't start. The budget is now only a ceiling; each stream's limit is the real one.</p></div>
+      <div class="fix"><span class="mono">a test that asserted a bug</span><p>A trends test expected a People total of 4 for a, b, a, c, who are 3 people. The headline added up per-day unique counts. The server now counts a true total.</p></div>
       <div class="fix"><span class="mono">a checksum that couldn't match</span><p>The macOS binary unpacks itself on first run, so its checksum changes. The pinned checksum is now taken from the download.</p></div>
     </div>
   </section>
@@ -229,7 +253,8 @@ JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123 make dev
       <li><strong>Retention is daily</strong>, for people whose first starting event falls in the range, and counts a return on each later day. No weekly view yet.</li>
       <li><strong>Funnels and retention use the time window you choose,</strong> not someone's full history before it.</li>
       <li><strong>Limited timezone choice.</strong> Charts are always in UTC, and the page says so.</li>
-      <li><strong>Events aren't replayed.</strong> If ClickHouse is down longer than the writer can hold (100,000 events), the oldest are dropped and logged. A durable queue arrives in Phase 9.</li>
+      <li><strong>A very long outage drops the oldest events, without a log line.</strong> Past <code>JUJU_ANALYTICS_QUEUE_MAX_MB</code>, JetStream removes them itself. juju logs how many are waiting when it stops and every failed write, but not a count of those dropped.</li>
+      <li><strong>Redelivery after a crash takes up to 60 s.</strong> Events a crashed process held come back once their acknowledgement time runs out, so charts can lag by that long after a <code>kill -9</code>. A clean stop has no such wait.</li>
       <li><strong>Untested on a real VPS.</strong> <code>deploy/setup.sh</code> installs ClickHouse 26.8.18.2 from its apt repository with a memory cap. The settings were checked against the real binary, but the install hasn't run on a real VPS yet.</li>
     </ul>
   </section>
