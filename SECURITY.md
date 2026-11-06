@@ -17,6 +17,11 @@ Please don't test against servers you don't run, including the public demo: run 
   The secret key (`sk_…`) reads data and uploads source maps; only its SHA-256 is stored.
 - **Dashboard logins**: bcrypt passwords; random 32-byte session tokens, stored hashed, in
   `HttpOnly`, `Secure`, `SameSite=Lax` cookies; a CSRF header on every request that changes data.
+- **Super admins** see every organization's name, member emails and usage counts, but no issue
+  details, event data or keys, and they can't open another organization's projects. Only
+  `juju user superadmin`, run on the server, can grant it: no HTTP request can, and it isn't based on
+  an email list, because sign-up doesn't verify email addresses. Every other account gets a 404, each
+  access is logged (`super admin access`), and a revoke applies to the next request.
 - **Rate limits**: failed logins per address and email (10 in 15 minutes) and per address (50);
   sign-ups per address (5 an hour); test alerts per project (5 in 10 minutes); alerts per project
   (30 an hour); events per project (`JUJU_RATE_LIMIT`).

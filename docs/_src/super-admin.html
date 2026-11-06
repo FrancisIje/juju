@@ -1,0 +1,215 @@
+<title>juju Super Admin</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column: the problem, the decisions, the setup commands, the evidence, the limits. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #6d28d9;
+  --accent-soft: #f1ebfd;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --warn: #a35300;
+  --warn-soft: #fdf1e3;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2ff;
+    --code-bg: #1d242d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --bad: #f87171; --bad-soft: #2c1517; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2ff;
+  --code-bg: #1d242d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section, .block { display: grid; gap: 16px; }
+section { gap: 22px; }
+.block { gap: 10px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-x: auto; white-space: nowrap; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Six columns don't fit a phone: keep the rows readable and let the panel scroll sideways. */
+table.wide { min-width: 680px; }
+.del { color: var(--bad); text-decoration: line-through; }
+.ins { color: var(--ok); }
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix .mono { font-family: var(--f-mono); font-size: 0.8rem; color: var(--accent); }
+.fix p { font-size: 0.93rem; }
+footer { color: var(--muted); font-size: 0.9rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Operations · Super admin</span>
+    <h1>See every organization on your server without reading their data</h1>
+    <p class="lede">Until now, juju's dashboard only showed the organizations you belonged to. The person running the server had no way to see who had signed up, which projects were sending events, or who was running out of quota. The super admin view answers those questions with counts, and keeps each customer's errors private.</p>
+    <div class="logline">[super admin] <b>VERIFIED</b> real binary, Postgres and Chrome: 6 projects in 5 organizations with the right status; ordinary account got 404; 0 customer strings in admin answers; 25 ms over 1,006 projects and 1,000,232 events</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The problem</span>
+    <h2>Operators need the whole picture, and customers need their privacy</h2>
+    <p>Before this change, answering "is Globex over its quota?" meant opening a database shell on the server. The obvious fix, letting an admin open any project, would also let them read every customer's stack traces and error messages. Those can hold personal data, as this real test message shows:</p>
+    <pre class="code">PRIVATE customer text: card declined for jo@acme.test</pre>
+    <p>So the view has a narrower job: show enough to run the server, and nothing from inside a project. In the verification run, that message's project appeared as a row of numbers, and searching every admin answer for the text found nothing.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">How it works</span>
+    <h2>Four decisions</h2>
+    <div class="block">
+      <h3>The flag is set from the server's shell, never over the web</h3>
+      <p>Being a super admin is a column on the user's row, <code>users.is_superadmin</code>. Only the <code>juju user superadmin</code> command changes it.</p>
+      <p class="why">An allow-list of emails in the config looks simpler, but juju doesn't verify email addresses when people sign up. Anyone could register the allow-listed address first and become an admin. With no HTTP endpoint for the flag, a web bug or a stolen session can't grant it either.</p>
+    </div>
+    <div class="block">
+      <h3>It's checked on every request, and refusal looks like nothing's there</h3>
+      <p>The flag comes from the same database lookup that checks the session. Ordinary accounts get exactly the same 404 as a route that doesn't exist.</p>
+      <p class="why">Because nothing caches the flag, a revoke applies to the admin's very next request, even with a session still open. The sidebar link is hidden too, but that's only tidiness: the server's check is what protects the data.</p>
+    </div>
+    <div class="block">
+      <h3>Counts and contacts only</h3>
+      <div class="panel">
+        <table>
+          <thead><tr><th>Super admins see</th><th>Super admins don't see</th></tr></thead>
+          <tbody>
+            <tr><td>Organization and project names, creation dates</td><td>Issue titles, stack traces, event payloads</td></tr>
+            <tr><td>Member emails, names and roles</td><td>Public keys, secret keys, webhook URLs</td></tr>
+            <tr><td>Event, error, session and unresolved issue counts, quota use</td><td>Any project page, unless they belong to its organization</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="why">Member emails are shown because someone has to be contacted when a project has a problem. Every access is also logged as <code>super admin access</code> with the user id and path, because this view crosses every organization's boundary.</p>
+    </div>
+    <div class="block">
+      <h3>"Last event" comes from a counter ingest already writes</h3>
+      <p>The obvious source, <code>issues.last_seen</code>, misses analytics and session events, which never create an issue, and it uses the app's clock. So <code>project_usage</code> gained <code>last_accepted_at</code>, written with the event counts ingest already saves in batches every few seconds.</p>
+      <p class="why">That covers every kind of event, uses the server's clock and adds no work per event. Older events have no such time, so <code>issues.last_seen</code> remains a fallback, capped at the current time in case a device's clock is wrong.</p>
+    </div>
+    <div class="block">
+      <h3>What each status means</h3>
+      <div class="panel">
+        <table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Over quota</td><td>Used its monthly quota, so ingest answers 429. A quota change reaches ingest within 30 seconds.</td></tr>
+            <tr><td>Near quota</td><td>Used at least 80% of its monthly quota.</td></tr>
+            <tr><td>Active</td><td>Received an event in the last 7 days.</td></tr>
+            <tr><td>Quiet</td><td>Sent events before, but none in the last 7 days. Its app may have stopped reporting.</td></tr>
+            <tr><td>No events yet</td><td>Has never sent an event. Setup may be unfinished.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Make your account a super admin</h2>
+    <p>The account must exist first. On a server installed with <code>deploy/setup.sh</code>:</p>
+    <pre class="code"><span class="c"># grant, then list who has it</span>
+juju-admin user superadmin -email you@example.com
+
+<span class="c"># list only</span>
+juju-admin user superadmin
+
+<span class="c"># take it away, effective on the next request</span>
+juju-admin user superadmin -email you@example.com -revoke</pre>
+    <p>Reload the dashboard and <b>Super admin</b> appears in the sidebar, at <code>/admin</code>. Search and status filters live in the URL, so you can share a view with another admin. <kbd>/</kbd> focuses the search, and ⌘K reaches both tabs.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked, on what</h2>
+    <p class="note">On a local Postgres 17 with the real binary, real ingest and system Chrome, 2026-11-06.</p>
+    <div class="panel">
+      <table class="wide">
+        <thead><tr><th>Check</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Ordinary account, logged out</td><td>404 with the unknown-route body, and 401</td></tr>
+          <tr><td>Sign-up sending <code>is_superadmin: true</code></td><td>Ignored: overview answers 404</td></tr>
+          <tr><td>Grant and revoke on an open session</td><td>200 straight after the grant, 404 straight after the revoke</td></tr>
+          <tr><td>Super admin opening another organization's project</td><td>404 for its project, issues and alerts, and for the organization's members</td></tr>
+          <tr><td>Customer data in admin answers</td><td>0 matches for the private message, <code>pk_</code> and <code>sk_</code>; the integration test also checks for the webhook URL</td></tr>
+          <tr><td>Numbers against what was sent</td><td>25, 120 and 85 events through ingest appeared as sent; 120 of 100 showed Over quota, 85 of 100 Near quota</td></tr>
+          <tr><td>Over quota means refused</td><td>429 "monthly event quota reached" once the 30-second project cache expired; 202 before that</td></tr>
+          <tr><td>Hostile names in Chrome</td><td>An organization named <code>&lt;img src=x onerror=…&gt;</code> showed as text: script didn't run, 0 injected images</td></tr>
+          <tr><td>Scale, with other sessions running on the laptop (load average about 3)</td><td>25 ms and 430 KB for the overview over 1,006 projects and 1,000,232 events; 1,006 rows rendered in 246 ms</td></tr>
+          <tr><td>Migration</td><td>Up, down, up on a fresh database</td></tr>
+          <tr><td>Screens</td><td>All pages in dark and light at 1360 and 390 px; no page scrolled sideways</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Bugs this exposed</h3>
+    <div class="fixes">
+      <div class="fix"><span class="mono">LEAST ignores NULL</span><p>Projects that had never sent anything showed as Active, last event "just now", because Postgres's <code>LEAST(NULL, now)</code> returns <code>now</code>. On the real binary: <span class="del">shop-ios active</span> became <span class="ins">shop-ios no_events</span>.</p></div>
+      <div class="fix"><span class="mono">A test that couldn't fail</span><p>Removing the <code>last_accepted_at</code> write left the tests green, because the project in the test also had an error to fall back on. A new test uses a project with usage and no issues, and catches both the insert and update paths.</p></div>
+      <div class="fix"><span class="mono">Screens the numbers missed</span><p>At 1360 px the Last event column was cut off and the status filter stretched across the page. Both showed up only in the screenshots, so the check now measures the table too.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>What this doesn't do yet</h2>
+    <ul>
+      <li>It's read-only: changing a quota or suspending an organization still happens from the shell or isn't possible.</li>
+      <li>There's no two-factor login. A stolen super admin password exposes every customer's member emails, so use a strong, unique one and keep the number of admins small.</li>
+      <li>The access record is a server log line, not a page, so reading it takes server access.</li>
+      <li>The page loads all projects at once. That's fast at a thousand projects, but would need paging at many thousands.</li>
+      <li>Event counts run a few seconds behind ingest. Events that arrived before this deploy have no recorded time, so a project that only sends analytics or sessions shows as Quiet until its next event.</li>
+      <li>"Quiet" means nothing arrived. It can't tell a broken SDK from an app nobody opened this week.</li>
+    </ul>
+  </section>
+
+  <footer>Part of the juju project docs. See the <a href="https://francisije.github.io/juju/">roadmap</a>, <a href="https://francisije.github.io/juju/dashboard.html">dashboard and alerts</a>, and <a href="https://francisije.github.io/juju/scale.html">scale and hardening</a> (where quotas come from).</footer>
+</div>

@@ -55,6 +55,8 @@ export interface User {
   id: number;
   email: string;
   name: string;
+  /** Only sent when true. The server checks this itself on every admin request. */
+  is_superadmin?: boolean;
 }
 
 export interface ProjectSummary {
@@ -331,4 +333,65 @@ export interface TransactionPayload {
     measurements?: Record<string, number>;
     spans?: SpanPayload[];
   };
+}
+
+// The super admin view. Mirrors server/internal/store/admin.go.
+
+export type AdminStatus = "active" | "quiet" | "no_events" | "near_quota" | "over_quota" | "no_projects";
+
+export interface AdminProject {
+  id: number;
+  organization_id: number;
+  organization: string;
+  name: string;
+  created_at: string;
+  status: AdminStatus;
+  unresolved: number;
+  events_this_month: number;
+  events_last_month: number;
+  monthly_quota: number | null;
+  rate_limit: number | null;
+  errors_24h: number;
+  sessions_24h: number;
+  crashed_24h: number;
+  last_event_at: string | null;
+}
+
+export interface AdminOrg {
+  id: number;
+  name: string;
+  created_at: string;
+  owner_email: string;
+  members: number;
+  projects: number;
+  status: AdminStatus;
+  unresolved: number;
+  events_this_month: number;
+  errors_24h: number;
+  last_event_at: string | null;
+}
+
+export interface AdminOverview {
+  generated_at: string;
+  totals: {
+    organizations: number;
+    new_organizations_7d: number;
+    projects: number;
+    new_projects_7d: number;
+    users: number;
+    new_users_7d: number;
+    events_this_month: number;
+    events_last_month: number;
+    errors_24h: number;
+    unresolved: number;
+    by_status: Partial<Record<AdminStatus, number>>;
+  };
+  organizations: AdminOrg[];
+  projects: AdminProject[];
+}
+
+export interface AdminOrgDetail {
+  organization: AdminOrg;
+  projects: AdminProject[];
+  members: Member[];
 }

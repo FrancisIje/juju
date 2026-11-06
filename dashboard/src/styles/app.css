@@ -78,6 +78,9 @@ textarea.input { height: auto; padding: var(--space-2) var(--space-3); resize: v
 .chip.resolved { color: var(--green); background: var(--green-soft); }
 .chip.ignored { color: var(--text-muted); background: var(--surface-2); }
 .chip.regressed { color: var(--amber); background: var(--amber-soft); }
+.chip.good { color: var(--green); background: var(--green-soft); }
+.chip.warn { color: var(--amber); background: var(--amber-soft); }
+.chip.bad { color: var(--red); background: var(--red-soft); }
 .chip.info { color: var(--blue); background: var(--blue-soft); }
 .chip.brand { color: var(--brand); background: var(--brand-soft); }
 
@@ -289,6 +292,8 @@ pre.code {
 .clickable:hover td { background: var(--surface-hover); }
 .table tr[aria-selected="true"] td { background: var(--brand-soft); }
 .table .num { text-align: right; white-space: nowrap; } /* "1.01 s" never splits from its unit */
+/* Many columns: long headers wrap so the whole table fits on a laptop. */
+.admin-table th.num { white-space: normal; }
 .nowrap { white-space: nowrap; } /* release names: "web@1.0.1" mustn't break mid-version */
 @media (max-width: 760px) {
   .wf-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
