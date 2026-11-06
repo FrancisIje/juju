@@ -133,12 +133,17 @@ type TrendQuery struct {
 type Series struct {
 	Label  string  `json:"label"`
 	Values []int64 `json:"values"`
-	Total  int64   `json:"total"`
+	Total  int64   `json:"total"` // this line over the whole range, each person once
 }
 
 type TrendResult struct {
 	Buckets []time.Time `json:"buckets"`
 	Series  []Series    `json:"series"`
+	// Total is the whole answer for the range: every event, or every
+	// different person, including breakdown values not shown. It can't be
+	// worked out from Series: someone active on two days is one person, not
+	// two, and someone on both iOS and Android is in both of those lines.
+	Total int64 `json:"total"`
 	// More breakdown values existed than are shown (the top MaxSeries are).
 	Hidden int `json:"hidden"`
 }
@@ -191,7 +196,30 @@ func (c *Client) Trend(ctx context.Context, projectID int64, q TrendQuery) (Tren
 		}
 		if i, ok := index[r.Bucket]; ok {
 			s.Values[i] += r.Value
-			s.Total += r.Value
+		}
+	}
+	// Totals are counted again over the whole range, not added up from the
+	// buckets: unique counts don't add.
+	type totalRow struct {
+		Label string `json:"label"`
+		All   uint8  `json:"all"`
+		Value int64  `json:"value"`
+	}
+	totals, err := Query[totalRow](ctx, c, `WITH `+personEvents+`
+		SELECT toString(`+label+`) AS label, 0 AS all, `+value+` AS value
+		FROM pe WHERE name = {event:String} GROUP BY label
+		UNION ALL
+		SELECT '' AS label, 1 AS all, `+value+` AS value
+		FROM pe WHERE name = {event:String}`, params)
+	if err != nil {
+		return TrendResult{}, err
+	}
+	var total int64
+	for _, r := range totals {
+		if r.All == 1 {
+			total = r.Value
+		} else if s := byLabel[r.Label]; s != nil {
+			s.Total = r.Value
 		}
 	}
 	series := make([]Series, 0, len(byLabel))
@@ -205,7 +233,7 @@ func (c *Client) Trend(ctx context.Context, projectID int64, q TrendQuery) (Tren
 		}
 		return strings.Compare(a.Label, b.Label)
 	})
-	res := TrendResult{Buckets: buckets, Series: series}
+	res := TrendResult{Buckets: buckets, Series: series, Total: total}
 	if len(series) > MaxSeries {
 		res.Series, res.Hidden = series[:MaxSeries], len(series)-MaxSeries
 	}
@@ -230,7 +258,10 @@ const maxFunnelSteps = 8
 
 // Funnel counts how many people did step 1, then step 2 after it, and so on,
 // within Window of their first step. windowFunnel does the ordering per
-// person; people who reached step k count for every step up to k.
+// person; people who reached step k count for every step up to k. It compares
+// milliseconds: whole seconds would count a step taken just before the
+// previous one as being after it. Steps in the same millisecond count as in
+// order, since nothing says otherwise.
 func (c *Client) Funnel(ctx context.Context, projectID int64, q FunnelQuery) ([]FunnelStep, error) {
 	if len(q.Steps) < 2 || len(q.Steps) > maxFunnelSteps {
 		return nil, ErrBadQuery{fmt.Sprintf("a funnel needs 2 to %d steps", maxFunnelSteps)}
@@ -239,7 +270,7 @@ func (c *Client) Funnel(ctx context.Context, projectID int64, q FunnelQuery) ([]
 		return nil, ErrBadQuery{"the conversion window must be longer than 0"}
 	}
 	params := q.Range.params(projectID)
-	params["window"] = strconv.FormatInt(int64(q.Window/time.Second), 10)
+	params["window"] = strconv.FormatInt(q.Window.Milliseconds(), 10)
 	conds := make([]string, len(q.Steps))
 	names := make([]string, len(q.Steps))
 	for i, s := range q.Steps {
@@ -257,7 +288,7 @@ func (c *Client) Funnel(ctx context.Context, projectID int64, q FunnelQuery) ([]
 	}
 	rows, err := Query[row](ctx, c, `WITH `+personEvents+`
 		SELECT level, count() AS people FROM (
-			SELECT person, windowFunnel({window:UInt64})(toDateTime(timestamp), `+strings.Join(conds, ", ")+`) AS level
+			SELECT person, windowFunnel({window:UInt64})(toUInt64(toUnixTimestamp64Milli(timestamp)), `+strings.Join(conds, ", ")+`) AS level
 			FROM pe WHERE name IN (`+strings.Join(names, ", ")+`)
 			GROUP BY person
 		) GROUP BY level`, params)

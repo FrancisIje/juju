@@ -65,13 +65,20 @@ export function captureSnippet(p: Platform, dsn: string): string {
     case "web":
       return `import * as juju from "@juju/web";
 
+// Once at startup (already there if you set up error tracking):
+juju.init({ dsn: "${dsn}", release: "web@1.0.0" });
+
 juju.capture("checkout_started", { plan: "pro", items: 3 });
 
 // After login and logout:
 juju.identify(user.id);
 juju.reset();`;
     case "react-native":
-      return `import * as juju from "@juju/react-native";
+      return `import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as juju from "@juju/react-native";
+
+// Once at startup (already there if you set up error tracking):
+juju.init({ dsn: "${dsn}", release: "myapp@1.0.0+1", storage: AsyncStorage });
 
 juju.capture("checkout_started", { plan: "pro", items: 3 });
 
@@ -80,6 +87,9 @@ juju.identify(user.id);
 juju.reset();`;
     case "flutter":
       return `import 'package:juju_flutter/juju_flutter.dart';
+
+// Once at startup (already there if you set up error tracking):
+await Juju.init(JujuOptions(dsn: '${dsn}', release: 'myapp@1.0.0+1'));
 
 Juju.capture('checkout_started', {'plan': 'pro', 'items': 3});
 

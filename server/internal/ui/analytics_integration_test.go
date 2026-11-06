@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -126,10 +127,22 @@ func TestAnalyticsEndToEnd(t *testing.T) {
 			People int64
 		}
 	}
-	owner.do("GET", fmt.Sprintf("/api/ui/projects/%d/analytics/funnel?steps=checkout_started,checkout_completed", proj.ID), nil, false, &funnel)
+	owner.do("GET", fmt.Sprintf("/api/ui/projects/%d/analytics/funnel?step=checkout_started&step=checkout_completed", proj.ID), nil, false, &funnel)
 	if len(funnel.Steps) != 2 || funnel.Steps[0].People != 4 || funnel.Steps[1].People != 1 {
 		t.Errorf("funnel = %+v", funnel)
 	}
+	// A comma in an event name is part of the name, not a second step.
+	send("juju.web", capture("plan,changed", "anon-w1", `{}`))
+	waitFor(t, "the event with a comma", func() bool {
+		var f struct {
+			Steps []struct {
+				Event  string
+				People int64
+			}
+		}
+		owner.do("GET", fmt.Sprintf("/api/ui/projects/%d/analytics/funnel?step=%s&step=checkout_started", proj.ID, url.QueryEscape("plan,changed")), nil, false, &f)
+		return len(f.Steps) == 2 && f.Steps[0].Event == "plan,changed" && f.Steps[0].People == 1
+	})
 	var props struct{ Properties []string }
 	owner.do("GET", fmt.Sprintf("/api/ui/projects/%d/analytics/properties?event=checkout_started", proj.ID), nil, false, &props)
 	if fmt.Sprint(props.Properties) != "[plan]" {
@@ -156,7 +169,7 @@ func TestAnalyticsEndToEnd(t *testing.T) {
 	}
 	outsider := newClient(t, srv.URL)
 	outsider.do("POST", "/api/ui/auth/login", map[string]string{"email": "outsider@analytics.test", "password": "correct horse battery"}, true, nil)
-	for _, path := range []string{"analytics", "analytics/trend?event=checkout_started", "analytics/funnel?steps=a,b", "analytics/retention?start=a&return=b", "analytics/properties?event=a"} {
+	for _, path := range []string{"analytics", "analytics/trend?event=checkout_started", "analytics/funnel?step=a&step=b", "analytics/retention?start=a&return=b", "analytics/properties?event=a"} {
 		if code := outsider.do("GET", fmt.Sprintf("/api/ui/projects/%d/%s", proj.ID, path), nil, false, nil); code != 404 {
 			t.Errorf("outsider GET %s: %d, want 404", path, code)
 		}

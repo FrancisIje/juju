@@ -22,6 +22,8 @@ export interface Series {
 export interface Trend {
   buckets: string[];
   series: Series[];
+  /** The whole range: every event or different person, hidden values included. */
+  total: number;
   hidden: number;
 }
 
@@ -89,9 +91,27 @@ export function niceTicks(max: number, count = 4): number[] {
   if (max <= 0) return [0, 1];
   const rough = max / count;
   const mag = 10 ** Math.floor(Math.log10(rough));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= rough) ?? rough;
+  // Counts are whole numbers, so from 1 up the steps are too: no "0.25 events".
+  const nice = [1, 2, 2.5, 5, 10].map((m) => m * mag).filter((s) => max < 1 || Number.isInteger(s));
+  const step = nice.find((s) => s >= rough) ?? rough;
   const top = Math.ceil(max / step) * step;
   const ticks: number[] = [];
   for (let v = 0; v <= top + step / 2; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
   return ticks;
+}
+
+/**
+ * Funnel steps in one URL value, so a funnel can be bookmarked. A comma inside
+ * an event name is written %2C, or it would read as two steps. Plain names look
+ * the same as before, so links people already saved keep working.
+ */
+export function joinSteps(steps: string[]): string {
+  return steps.map((s) => s.replaceAll("%", "%25").replaceAll(",", "%2C")).join(",");
+}
+
+export function splitSteps(value: string): string[] {
+  return value
+    .split(",")
+    .filter(Boolean)
+    .map((s) => s.replaceAll("%2C", ",").replaceAll("%25", "%"));
 }
