@@ -160,6 +160,7 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		q, err = queue.OpenJetStream(ctx, queue.JetStreamConfig{
 			URL: cfg.NATSURL, Dir: filepath.Join(cfg.DataDir, "queue"), MaxBytes: int64(cfg.QueueMaxMB) << 20,
 			Fetch: max(16, 4*cfg.Workers), Log: log,
+			Analytics: cfg.ClickHouseURL != "", AnalyticsMaxBytes: int64(cfg.AnalyticsQueueMaxMB) << 20,
 		})
 		if err != nil {
 			return fmt.Errorf("queue: %w", err)
@@ -202,7 +203,7 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 			Log:               log,
 		}
 		alerts.Start(2)
-		ch, chWriter = startAnalytics(ctx, cfg, roles, log)
+		ch, chWriter = startAnalytics(ctx, cfg, roles, q, log)
 	}
 
 	if roles.Worker {
@@ -214,7 +215,7 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		sym := &symbolicate.Service{Files: symbolicate.StoredFiles{Store: st, Blobs: blobs}, Log: log}
 		var analyticsSink worker.Analytics
 		if chWriter != nil {
-			analyticsSink = chWriter
+			analyticsSink = q
 		}
 		go func() {
 			// Workers get a fresh context, not ctx: they must finish the
@@ -289,7 +290,13 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		alerts.Stop() // after the workers: they may have just queued alerts
 	}
 	if chWriter != nil {
-		chWriter.Stop() // after the workers too: writes what they handed over
+		// After the workers too: they may have just moved old events across.
+		// Whatever this doesn't write stays in the queue for next time.
+		q.StopAnalytics()
+		chWriter.Wait()
+		if left, err := q.AnalyticsPending(context.Background()); err == nil {
+			log.Info("analytics stopped", "events_waiting_in_queue", left)
+		}
 	}
 	if q != nil {
 		left, _ := q.Pending(context.Background())
@@ -334,7 +341,7 @@ func runRetention(ctx context.Context, st *store.Store, days int, log *slog.Logg
 // way: errors are the core job, so a ClickHouse that's down or slow to start
 // mustn't stop them. Tables are created in the background, retrying, and the
 // writer (on workers) holds events until it can write them.
-func startAnalytics(ctx context.Context, cfg config.Config, roles config.Roles, log *slog.Logger) (*analytics.Client, *analytics.Writer) {
+func startAnalytics(ctx context.Context, cfg config.Config, roles config.Roles, q *queue.JetStream, log *slog.Logger) (*analytics.Client, *analytics.Writer) {
 	if cfg.ClickHouseURL == "" {
 		log.Info("analytics off: set JUJU_CLICKHOUSE_URL to turn it on")
 		return nil, nil
@@ -343,7 +350,7 @@ func startAnalytics(ctx context.Context, cfg config.Config, roles config.Roles, 
 	var w *analytics.Writer
 	if roles.Worker {
 		w = &analytics.Writer{Client: ch, Log: log}
-		w.Start()
+		w.Start(q.Analytics())
 	}
 	go func() {
 		for attempt := 1; ; attempt++ {

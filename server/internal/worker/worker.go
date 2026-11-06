@@ -38,11 +38,11 @@ type Live interface {
 	Changed(projectID int64)
 }
 
-// Analytics takes product analytics events (event, identify). Optional:
-// nil means analytics is off and they're dropped. Must not block.
-type Analytics interface {
-	Add(e *event.Event)
-}
+// Analytics takes product analytics events found in the main stream. New ones
+// go straight to their own stream at ingest; these were queued before that
+// stream existed, or by a process that hadn't been told about ClickHouse.
+// Optional: nil means analytics is off and they're dropped.
+type Analytics = queue.Publisher
 
 // Symbolicator rewrites minified or obfuscated frames into source
 // locations. Optional: nil skips symbolication.
@@ -130,13 +130,13 @@ func process(ctx context.Context, e *event.Event, d Deps) (err error) {
 
 	switch {
 	// Analytics events aren't issues: no symbolication, no fingerprint, no
-	// alerts. They go to ClickHouse in batches.
+	// alerts. Moved to their own stream, and acknowledged here only once
+	// that's done, so nothing is lost on the way.
 	case e.IsAnalytics():
 		if d.Analytics != nil {
-			d.Analytics.Add(e)
-		} else {
-			log.Debug("analytics is off (no JUJU_CLICKHOUSE_URL), dropping event", "name", e.Name)
+			return d.Analytics.Publish(ctx, []*event.Event{e})
 		}
+		log.Debug("analytics is off (no JUJU_CLICKHOUSE_URL), dropping event", "name", e.Name)
 		return nil
 	// Sessions and transactions have their own tables. They need no alerts
 	// or live refresh: the pages that show them reload on a timer, and an

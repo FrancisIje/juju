@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"juju/internal/event"
+	"juju/internal/queue"
 	"juju/internal/testch"
 )
 
@@ -74,8 +75,9 @@ type ev struct {
 // write stores events through the Writer, the same path production uses.
 func write(t *testing.T, c *Client, project int64, evs []ev) {
 	t.Helper()
+	q := queue.NewChan(len(evs) + 1)
 	w := &Writer{Client: c, Log: quiet, FlushEvery: 50 * time.Millisecond}
-	w.Start()
+	w.Start(q)
 	for _, e := range evs {
 		id := e.id
 		if id == "" {
@@ -88,11 +90,14 @@ func write(t *testing.T, c *Client, project int64, evs []ev) {
 		if e.identify != "" {
 			x.Type, x.Name, x.AnonID = event.TypeIdentify, "$identify", e.identify
 		}
-		w.Add(x)
+		if err := q.Publish(context.Background(), []*event.Event{x}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	w.Stop()
-	if w.Dropped() != 0 {
-		t.Fatalf("writer dropped %d events", w.Dropped())
+	q.Close()
+	w.Wait()
+	if dead := q.DeadLetters(); len(dead) > 0 {
+		t.Fatalf("events set aside: %v", dead)
 	}
 }
 
@@ -269,7 +274,7 @@ func TestEventNamesPropertiesAndInjection(t *testing.T) {
 }
 
 // ClickHouse briefly failing (a restart, a deploy) must not lose events:
-// the writer keeps the batch and retries.
+// the batch goes back to the queue and is written once it recovers.
 func TestWriterRetriesWhenClickHouseFails(t *testing.T) {
 	c := newClient(t)
 	target, _ := url.Parse(chURL)
@@ -285,10 +290,13 @@ func TestWriterRetriesWhenClickHouseFails(t *testing.T) {
 	defer flaky.Close()
 
 	w := &Writer{Client: &Client{URL: flaky.URL, Database: c.Database}, Log: quiet, FlushEvery: 50 * time.Millisecond}
-	w.Start()
+	q := queue.NewChan(8)
+	w.Start(q)
 	for i := range 3 {
 		x := &event.Event{EventID: fmt.Sprintf("22222222-2222-4222-8222-%012d", i), Type: event.TypeEvent, Name: "tap", DistinctID: "a", ProjectID: 1, Time: day0, ReceivedAt: day0}
-		w.Add(x)
+		if err := q.Publish(context.Background(), []*event.Event{x}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -301,9 +309,39 @@ func TestWriterRetriesWhenClickHouseFails(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	w.Stop()
+	q.Close()
+	w.Wait()
 	if calls.Load() < 3 {
 		t.Errorf("expected retries, got %d calls", calls.Load())
+	}
+}
+
+// A row the real ClickHouse can't parse answers 400: it's set aside, and the
+// good rows in its batch are written. (Ingest rejects bad ids; this is for
+// whatever else ClickHouse might refuse one day.)
+func TestRowClickHouseRefusesIsSetAside(t *testing.T) {
+	c := newClient(t)
+	q := queue.NewChan(8)
+	w := &Writer{Client: c, Log: quiet, FlushEvery: time.Hour}
+	w.Start(q)
+	var evs []*event.Event
+	for i, id := range []string{"33333333-3333-4333-8333-000000000001", "not-a-uuid", "33333333-3333-4333-8333-000000000003"} {
+		evs = append(evs, &event.Event{EventID: id, Type: event.TypeEvent, Name: "tap", DistinctID: fmt.Sprint("p", i), ProjectID: 1, Time: day0, ReceivedAt: day0})
+	}
+	if err := q.Publish(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+	q.Close()
+	w.Wait()
+	if dead := q.DeadLetters(); len(dead) != 1 || !strings.HasPrefix(dead[0], "not-a-uuid") {
+		t.Errorf("dead letters = %v, want only the bad row", dead)
+	}
+	res, err := c.Trend(context.Background(), 1, TrendQuery{Event: "tap", Range: week(), Interval: Day})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Series[0].Total != 2 {
+		t.Errorf("stored %d, want the 2 good rows", res.Series[0].Total)
 	}
 }
 

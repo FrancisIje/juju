@@ -2,172 +2,158 @@ package analytics
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"juju/internal/event"
+	"juju/internal/queue"
 )
 
-// Writer batches analytics events into ClickHouse. ClickHouse wants few,
-// large inserts: each insert creates a new part on disk that it later
-// merges, so thousands of one-row inserts a second would swamp it.
+// Writer batches analytics events from the queue into ClickHouse. ClickHouse
+// wants few, large inserts: each insert creates a new part on disk that it
+// later merges, so thousands of one-row inserts a second would swamp it.
 //
-// It never blocks the worker. If ClickHouse is down, it keeps retrying with
-// backoff while holding up to MaxPending rows; past that the oldest are
-// dropped and counted, because storing errors matters more than counting
-// clicks.
+// An event is acknowledged only after ClickHouse has it, so a crash at any
+// moment loses nothing: whatever wasn't acknowledged is delivered again. That
+// can write a row twice, which is safe because the table merges rows with the
+// same event_id and counts use uniqExact(event_id).
+//
+// When ClickHouse is down the batch goes back to the queue with a delay. The
+// queue owns retries; this holds nothing it can't lose.
 type Writer struct {
 	Client     *Client
 	Log        *slog.Logger
 	FlushEvery time.Duration // default 1s
 	BatchSize  int           // flush early at this many rows; default 5000
-	MaxPending int           // default 100000
 
-	in      chan *event.Event
-	stop    chan struct{}
-	done    chan struct{}
-	once    sync.Once
-	mu      sync.Mutex
-	dropped int64
+	done chan struct{}
 }
 
-func (w *Writer) init() {
-	w.once.Do(func() {
-		if w.FlushEvery == 0 {
-			w.FlushEvery = time.Second
-		}
-		if w.BatchSize == 0 {
-			w.BatchSize = 5000
-		}
-		if w.MaxPending == 0 {
-			w.MaxPending = 100_000
-		}
-		w.in = make(chan *event.Event, 10_000)
-		w.stop = make(chan struct{})
-		w.done = make(chan struct{})
-	})
-}
-
-// Add hands an event to the writer without waiting.
-func (w *Writer) Add(e *event.Event) {
-	w.init()
-	select {
-	case w.in <- e:
-	default:
-		w.countDrop(1)
+// Start runs the batching loop until src's deliveries close.
+func (w *Writer) Start(src queue.Source) {
+	if w.FlushEvery == 0 {
+		w.FlushEvery = time.Second
 	}
+	if w.BatchSize == 0 {
+		w.BatchSize = 5000
+	}
+	w.done = make(chan struct{})
+	go w.loop(src.Deliveries())
 }
 
-// Dropped is how many events were thrown away because ClickHouse couldn't
-// keep up or was down for too long.
-func (w *Writer) Dropped() int64 {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.dropped
-}
+// Wait returns once the deliveries have closed and the last batch is handled.
+func (w *Writer) Wait() { <-w.done }
 
-func (w *Writer) countDrop(n int) {
-	w.mu.Lock()
-	w.dropped += int64(n)
-	w.mu.Unlock()
-}
-
-// Start runs the batching loop until Stop.
-func (w *Writer) Start() {
-	w.init()
-	go w.loop()
-}
-
-// Stop flushes what's pending (trying for up to 10s) and returns.
-func (w *Writer) Stop() {
-	w.init()
-	close(w.stop)
-	<-w.done
-}
-
-func (w *Writer) loop() {
+func (w *Writer) loop(deliveries <-chan queue.Delivery) {
 	defer close(w.done)
-	var events, aliases []any
+	var batch []queue.Delivery
 	tick := time.NewTicker(w.FlushEvery)
 	defer tick.Stop()
 	failures := 0
 	var retryAt time.Time
 
 	flush := func(ctx context.Context) {
-		if len(events) == 0 && len(aliases) == 0 {
+		if len(batch) == 0 {
 			return
 		}
-		if !retryAt.IsZero() && time.Now().Before(retryAt) {
-			return
-		}
-		// Aliases first: a person's first event and its identify can arrive
-		// in one batch, and either order gives the same answer at query time.
-		err := w.Client.Insert(ctx, "person_aliases", aliases)
-		if err == nil {
-			aliases = nil
-			err = w.Client.Insert(ctx, "events", events)
-		}
+		delay := min(30*time.Second, time.Second<<min(failures, 5))
+		err := w.write(ctx, batch, delay)
+		pending := len(batch)
+		batch = nil
 		if err != nil {
 			failures++
-			delay := min(30*time.Second, time.Second<<min(failures-1, 5))
 			retryAt = time.Now().Add(delay)
-			w.Log.Warn("analytics: write failed, will retry", "err", err, "pending", len(events), "retry_in", delay)
+			w.Log.Warn("analytics: write failed, the queue will deliver these again", "err", err, "batch", pending, "retry_in", delay)
 			return
 		}
 		if failures > 0 {
 			w.Log.Info("analytics: writing again", "after_failures", failures)
 		}
 		failures, retryAt = 0, time.Time{}
-		events = nil
-	}
-
-	add := func(e *event.Event) {
-		events = append(events, Row(e))
-		if e.Type == event.TypeIdentify && e.AnonID != "" && e.AnonID != e.DistinctID {
-			aliases = append(aliases, aliasRow{ProjectID: e.ProjectID, DistinctID: e.AnonID, PersonID: e.DistinctID, CreatedAt: e.Time.Format(time.RFC3339Nano)})
-		}
-		if over := len(events) - w.MaxPending; over > 0 {
-			events = events[over:]
-			w.countDrop(over)
-			w.Log.Warn("analytics: too many events waiting, dropped the oldest", "dropped", over)
-		}
 	}
 
 	for {
 		select {
-		case e := <-w.in:
-			add(e)
-			if len(events) >= w.BatchSize {
+		case d, ok := <-deliveries:
+			if !ok {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				flush(ctx)
+				cancel()
+				return
+			}
+			// ClickHouse just failed: don't try it again yet. Anything that
+			// arrives meanwhile waits in the queue, not in memory.
+			if wait := time.Until(retryAt); wait > 0 {
+				d.Retry(wait)
+				continue
+			}
+			batch = append(batch, d)
+			if len(batch) >= w.BatchSize {
 				flush(context.Background())
 			}
 		case <-tick.C:
 			flush(context.Background())
-		case <-w.stop:
-			// Take what's still in the channel. A plain break inside select
-			// would only leave the select, so the loop is labeled.
-		drain:
-			for {
-				select {
-				case e := <-w.in:
-					add(e)
-				default:
-					break drain
-				}
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			retryAt = time.Time{}
-			flush(ctx)
-			cancel()
-			if len(events) > 0 {
-				w.countDrop(len(events))
-				w.Log.Error("analytics: lost events at shutdown, ClickHouse unreachable", "count", len(events))
-			}
-			return
 		}
 	}
+}
+
+// write settles every delivery in batch. It returns an error only when
+// ClickHouse couldn't take them right now; those are retried after delay.
+func (w *Writer) write(ctx context.Context, batch []queue.Delivery, delay time.Duration) error {
+	err := w.insert(ctx, batch)
+	if err == nil {
+		for _, d := range batch {
+			d.Ack()
+		}
+		return nil
+	}
+	if !isBadData(err) {
+		for _, d := range batch {
+			d.Retry(delay)
+		}
+		return err
+	}
+	// ClickHouse understood the request and refuses this data. Retrying won't
+	// change its mind, and with durable delivery one such row would otherwise
+	// block every event behind it, forever. Halve until it's alone, keep the
+	// good rows, and set the bad one aside.
+	if len(batch) == 1 {
+		w.Log.Error("analytics: ClickHouse refuses this event; kept as a dead letter", "event_id", batch[0].Event().EventID, "err", err)
+		batch[0].Dead(err.Error())
+		return nil
+	}
+	half := len(batch) / 2
+	return errors.Join(w.write(ctx, batch[:half], delay), w.write(ctx, batch[half:], delay))
+}
+
+// insert writes the identity links first: a person's first event and its
+// identify can arrive in one batch, and either order gives the same answer at
+// query time. If the events then fail the links are written again on retry,
+// which changes nothing: queries take the earliest link.
+func (w *Writer) insert(ctx context.Context, batch []queue.Delivery) error {
+	var events, aliases []any
+	for _, d := range batch {
+		e := d.Event()
+		events = append(events, Row(e))
+		if e.Type == event.TypeIdentify && e.AnonID != "" && e.AnonID != e.DistinctID {
+			aliases = append(aliases, aliasRow{ProjectID: e.ProjectID, DistinctID: e.AnonID, PersonID: e.DistinctID, CreatedAt: e.Time.Format(time.RFC3339Nano)})
+		}
+	}
+	if err := w.Client.Insert(ctx, "person_aliases", aliases); err != nil {
+		return err
+	}
+	return w.Client.Insert(ctx, "events", events)
+}
+
+// isBadData: ClickHouse answers 400 for data it can't parse. Everything else
+// (no answer, out of memory, too many parts, a table not created yet) can pass.
+func isBadData(err error) bool {
+	var re *ResponseError
+	return errors.As(err, &re) && re.Code == http.StatusBadRequest
 }
 
 type eventRow struct {

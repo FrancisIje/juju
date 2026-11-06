@@ -71,10 +71,13 @@ type Config struct {
 	SMTPFrom          string // JUJU_SMTP_FROM
 	// JUJU_CLICKHOUSE_URL (e.g. http://127.0.0.1:8123) turns on product
 	// analytics. Empty: error tracking works as before, analytics is off.
-	ClickHouseURL      string
-	ClickHouseUser     string // JUJU_CLICKHOUSE_USER
-	ClickHousePassword string // JUJU_CLICKHOUSE_PASSWORD
-	ClickHouseDatabase string // JUJU_CLICKHOUSE_DATABASE, default juju
+	ClickHouseURL string
+	// JUJU_ANALYTICS_QUEUE_MAX_MB caps the analytics events waiting on disk
+	// for ClickHouse. Past it the oldest are dropped; ingest keeps answering.
+	AnalyticsQueueMaxMB int
+	ClickHouseUser      string // JUJU_CLICKHOUSE_USER
+	ClickHousePassword  string // JUJU_CLICKHOUSE_PASSWORD
+	ClickHouseDatabase  string // JUJU_CLICKHOUSE_DATABASE, default juju
 }
 
 const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=disable"
@@ -101,6 +104,12 @@ func Load() (Config, error) {
 	var err error
 	if c.QueueMaxMB, err = getint("JUJU_QUEUE_MAX_MB", 1024); err != nil {
 		return c, err
+	}
+	if c.AnalyticsQueueMaxMB, err = getint("JUJU_ANALYTICS_QUEUE_MAX_MB", 512); err != nil {
+		return c, err
+	}
+	if c.AnalyticsQueueMaxMB < 1 {
+		return c, fmt.Errorf("JUJU_ANALYTICS_QUEUE_MAX_MB must be at least 1")
 	}
 	c.NATSURL = getenv("JUJU_NATS_URL", "")
 	c.KeepPII = isOff(getenv("JUJU_SCRUB_PII", "true"))

@@ -139,7 +139,8 @@ one person; `reset` starts a new anonymous id for the next person. The dashboard
 has trends (by platform, OS, browser, release or any property), funnels and retention.
 
 Events are stored in ClickHouse (`JUJU_CLICKHOUSE_URL`), a column database that keeps "count these
-over time" fast at analytics volumes. Postgres keeps everything else.
+over time" fast at analytics volumes. Postgres keeps everything else. An event stays in its own durable
+queue until ClickHouse has it, so a crash or a ClickHouse outage loses nothing that got a `202`.
 
 ## Symbolication
 
@@ -171,6 +172,7 @@ doesn't stop ingest either: events wait in the queue until Postgres is back.
 | `JUJU_ANALYTICS_RETENTION_DAYS` | `365` | ClickHouse table TTL; `0` keeps them |
 | `JUJU_SCRUB_PII` | `true` | removes emails, URL tokens, Bearer/Basic credentials, JWTs and values under keys like `password` at ingest, before anything is written; `user.*` and `distinct_id` are kept |
 | `JUJU_QUEUE_MAX_MB` | `1024` | queue size on disk; past it, `429` |
+| `JUJU_ANALYTICS_QUEUE_MAX_MB` | `512` | analytics events waiting on disk for ClickHouse; past it, the oldest are dropped and ingest keeps answering |
 | `JUJU_TRUSTED_PROXIES` | `127.0.0.1,::1` | reverse proxies whose `X-Forwarded-For` is believed; set it if your proxy isn't on the same machine, or every visitor shares the proxy's login and sign-up limits |
 
 Security model and how to report a vulnerability: [SECURITY.md](SECURITY.md).
