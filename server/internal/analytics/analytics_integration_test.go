@@ -63,6 +63,7 @@ var day0 = time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -6) // 6 days a
 type ev struct {
 	day      int // days after day0
 	hour     int
+	ms       int // milliseconds after the hour
 	name     string
 	who      string
 	lib      string
@@ -83,7 +84,7 @@ func write(t *testing.T, c *Client, project int64, evs []ev) {
 		}
 		x := &event.Event{EventID: id, Type: event.TypeEvent, Name: e.name, DistinctID: e.who, Properties: e.props,
 			Platform: "javascript", Environment: "production", ProjectID: project,
-			Time: day0.AddDate(0, 0, e.day).Add(time.Duration(e.hour) * time.Hour), ReceivedAt: time.Now()}
+			Time: day0.AddDate(0, 0, e.day).Add(time.Duration(e.hour)*time.Hour + time.Duration(e.ms)*time.Millisecond), ReceivedAt: time.Now()}
 		x.SDK.Name = e.lib
 		if e.identify != "" {
 			x.Type, x.Name, x.AnonID = event.TypeIdentify, "$identify", e.identify
@@ -154,8 +155,9 @@ func TestTrendCountsByDayAndBreakdown(t *testing.T) {
 	}
 
 	res, _ = c.Trend(ctx, 1, TrendQuery{Event: "checkout_started", Range: week(), Interval: Day, People: true})
-	if res.Series[0].Total != 4 || res.Series[0].Values[2] != 2 { // a, b on day 0; a, c on day 2
-		t.Errorf("people per day = %v", res.Series[0].Values)
+	// a, b on day 0; a, c on day 2: 3 different people over the range.
+	if res.Series[0].Total != 3 || res.Series[0].Values[0] != 2 || res.Series[0].Values[2] != 2 {
+		t.Errorf("people total = %d, per day = %v", res.Series[0].Total, res.Series[0].Values)
 	}
 }
 
@@ -206,6 +208,90 @@ func TestFunnelOrderAndWindow(t *testing.T) {
 	got := fmt.Sprint(steps[0].People, steps[1].People, steps[2].People)
 	if got != "4 3 1" {
 		t.Errorf("funnel = %s, want 4 3 1", got)
+	}
+}
+
+// Unique counts don't add up: 2 people active on 2 days are not 3 people.
+func TestTrendTotalsCountEachPersonOnce(t *testing.T) {
+	c := newClient(t)
+	write(t, c, 1, []ev{
+		{day: 0, name: "opened", who: "alice", lib: "juju.web"},
+		{day: 1, name: "opened", who: "alice", lib: "juju.flutter"},
+		{day: 1, name: "opened", who: "bob", lib: "juju.web"},
+	})
+	q := TrendQuery{Event: "opened", Range: week(), Interval: Day, People: true}
+	res, err := c.Trend(context.Background(), 1, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 2 || res.Series[0].Total != 2 {
+		t.Errorf("people total = %d, line total = %d, want 2 and 2", res.Total, res.Series[0].Total)
+	}
+	if res.Series[0].Values[0] != 1 || res.Series[0].Values[1] != 2 {
+		t.Errorf("people per day = %v, want 1 then 2", res.Series[0].Values)
+	}
+	// Alice used both platforms: in both lines, still one person overall.
+	q.Breakdown = "lib"
+	if res, err = c.Trend(context.Background(), 1, q); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, s := range res.Series {
+		got[s.Label] = s.Total
+	}
+	if res.Total != 2 || fmt.Sprint(got) != "map[juju.flutter:1 juju.web:2]" {
+		t.Errorf("total = %d, by platform = %v", res.Total, got)
+	}
+	q.Breakdown, q.People = "", false
+	if res, err = c.Trend(context.Background(), 1, q); err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 3 {
+		t.Errorf("events total = %d, want 3", res.Total)
+	}
+}
+
+// The chart shows the top 10 values; the total is still everything.
+func TestTrendTotalIncludesHiddenValues(t *testing.T) {
+	c := newClient(t)
+	var evs []ev
+	for i := range 12 {
+		evs = append(evs, ev{day: 0, name: "wide", who: fmt.Sprint("p", i), props: map[string]any{"v": fmt.Sprint("val", i)}})
+	}
+	write(t, c, 1, evs)
+	res, err := c.Trend(context.Background(), 1, TrendQuery{Event: "wide", Range: week(), Interval: Day, Breakdown: "property:v"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Series) != MaxSeries || res.Hidden != 2 || res.Total != 12 {
+		t.Errorf("shown %d, hidden %d, total %d; want 10, 2, 12", len(res.Series), res.Hidden, res.Total)
+	}
+}
+
+// Within one second, order still decides. Comparing whole seconds counted
+// "paid" at .100 as coming after "added" at .900.
+func TestFunnelComparesMilliseconds(t *testing.T) {
+	c := newClient(t)
+	write(t, c, 1, []ev{
+		{day: 0, ms: 100, name: "paid", who: "wrong-order"}, {day: 0, ms: 900, name: "added", who: "wrong-order"},
+		{day: 0, ms: 100, name: "added", who: "right-order"}, {day: 0, ms: 900, name: "paid", who: "right-order"},
+		{day: 0, ms: 500, name: "added", who: "same-instant"}, {day: 0, ms: 500, name: "paid", who: "same-instant"},
+	})
+	steps, err := c.Funnel(context.Background(), 1, FunnelQuery{Steps: []string{"added", "paid"}, Range: week(), Window: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps[0].People != 3 || steps[1].People != 2 {
+		t.Errorf("funnel = %d, %d; want 3, 2", steps[0].People, steps[1].People)
+	}
+	// The window is still measured in the right unit: a 1-hour window must
+	// not reach a step 2 hours later.
+	write(t, c, 2, []ev{{day: 0, hour: 1, name: "added", who: "late"}, {day: 0, hour: 3, name: "paid", who: "late"}})
+	if steps, err = c.Funnel(context.Background(), 2, FunnelQuery{Steps: []string{"added", "paid"}, Range: week(), Window: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if steps[1].People != 0 {
+		t.Errorf("step 2 hours later counted inside a 1 hour window")
 	}
 }
 

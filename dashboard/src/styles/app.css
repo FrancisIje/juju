@@ -91,6 +91,7 @@ textarea.input { height: auto; padding: var(--space-2) var(--space-3); resize: v
   padding: var(--space-4) var(--space-3); border-right: 1px solid var(--line); background: var(--bg-sunken);
   overflow-y: auto;
 }
+.sidebar > * { flex-shrink: 0; } /* with many projects the sidebar scrolls; nothing gets squashed */
 .brand-row { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-2); font-weight: 700; font-size: var(--text-lg); letter-spacing: -0.02em; }
 .nav { display: grid; gap: 2px; }
 .nav a {

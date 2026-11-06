@@ -92,7 +92,8 @@ func (a *API) analyticsFunnel(w http.ResponseWriter, r *http.Request, pid int64,
 	}
 	q := r.URL.Query()
 	var steps []string
-	for _, s := range strings.Split(q.Get("steps"), ",") {
+	// One parameter per step: an event name can contain a comma.
+	for _, s := range q["step"] {
 		if s = strings.TrimSpace(s); s != "" {
 			steps = append(steps, s)
 		}

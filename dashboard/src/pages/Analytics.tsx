@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Code } from "../components/CopyButton";
 import { LineChart } from "../components/LineChart";
 import { Pixels } from "../components/Pixels";
-import { breakdowns, percent, ranges, seriesLabel, type Cohort, type FunnelStep, type Summary, type Trend } from "../lib/analytics";
+import { breakdowns, joinSteps, percent, ranges, seriesLabel, splitSteps, type Cohort, type FunnelStep, type Summary, type Trend } from "../lib/analytics";
 import type { ProjectInfo } from "../lib/api";
 import { useShortcuts } from "../lib/keys";
 import { Link, navigate, useLocation } from "../lib/router";
@@ -28,6 +28,8 @@ export function Analytics({ projectId, tab }: { projectId: number; tab: Analytic
     "3": () => navigate(`${base}/retention`),
   });
 
+  // Refresh has to reach the open tab too, or the chart stays as it was.
+  const [refresh, setRefresh] = useState(0);
   const s = summary.data;
   const events = (s?.events ?? []).filter((e) => !e.name.startsWith("$"));
   return (
@@ -35,7 +37,14 @@ export function Analytics({ projectId, tab }: { projectId: number; tab: Analytic
       <div className="page-head">
         <h1>Analytics</h1>
         {s?.enabled && events.length > 0 && (
-          <button className="btn small" onClick={() => summary.reload()} title="Load the newest events">
+          <button
+            className="btn small"
+            onClick={() => {
+              void summary.reload();
+              setRefresh((n) => n + 1);
+            }}
+            title="Load the newest events"
+          >
             Refresh
           </button>
         )}
@@ -60,13 +69,19 @@ export function Analytics({ projectId, tab }: { projectId: number; tab: Analytic
               </Link>
             ))}
           </div>
-          {tab === "trends" && <Trends projectId={projectId} events={events.map((e) => e.name)} />}
-          {tab === "funnels" && <Funnels projectId={projectId} events={events.map((e) => e.name)} />}
-          {tab === "retention" && <Retention projectId={projectId} events={events.map((e) => e.name)} />}
+          {tab === "trends" && <Trends projectId={projectId} events={events.map((e) => e.name)} refresh={refresh} />}
+          {tab === "funnels" && <Funnels projectId={projectId} events={events.map((e) => e.name)} refresh={refresh} />}
+          {tab === "retention" && <Retention projectId={projectId} events={events.map((e) => e.name)} refresh={refresh} />}
         </>
       )}
     </div>
   );
+}
+
+interface TabProps {
+  projectId: number;
+  events: string[];
+  refresh: number;
 }
 
 function Off() {
@@ -121,6 +136,15 @@ function FirstEvent({ projectId }: { projectId: number }) {
   );
 }
 
+/** Reloads these requests when the page's Refresh button is pressed. */
+function useRefresh(refresh: number, ...requests: { reload: (quiet?: boolean) => Promise<void> }[]) {
+  useEffect(() => {
+    if (refresh > 0) for (const r of requests) void r.reload(true);
+    // Only a press of the button: the requests change on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh]);
+}
+
 /** Reads and writes one URL query parameter, so the view can be shared. */
 function useParam(key: string, fallback: string): [string, (v: string) => void] {
   const { path, query } = useLocation();
@@ -134,7 +158,7 @@ function useParam(key: string, fallback: string): [string, (v: string) => void] 
   return [value, set];
 }
 
-function Trends({ projectId, events }: { projectId: number; events: string[] }) {
+function Trends({ projectId, events, refresh }: TabProps) {
   const [event, setEvent] = useParam("event", events[0]!);
   const [rangeId, setRange] = useParam("range", "7d");
   const [math, setMath] = useParam("math", "events");
@@ -145,7 +169,8 @@ function Trends({ projectId, events }: { projectId: number; events: string[] }) 
   const trend = useApi<Trend>(`/api/ui/projects/${projectId}/analytics/trend?${q}`, 30_000);
   const t = trend.data;
   const series = useMemo(() => (t?.series ?? []).map((s) => ({ ...s, label: seriesLabel(breakdown, s.label) })), [t, breakdown]);
-  const total = series.reduce((a, s) => a + s.total, 0);
+  useRefresh(refresh, trend, props);
+  const total = t?.total ?? 0;
 
   return (
     <div style={{ display: "grid", gap: "var(--space-4)" }}>
@@ -208,12 +233,12 @@ function Trends({ projectId, events }: { projectId: number; events: string[] }) 
             {compact(total)}
           </span>
           <span className="muted">
-            {math === "people" ? "people did" : "times:"} <strong className="mono">{event}</strong>, {range.label.toLowerCase()}
+            {math === "people" ? (total === 1 ? "person did" : "people did") : "times:"} <strong className="mono">{event}</strong>, {range.label.toLowerCase()}
           </span>
         </div>
         {t && <LineChart buckets={t.buckets} series={series} interval={range.interval} />}
         <p className="faint" style={{ fontSize: "var(--text-xs)" }}>
-          Grouped by {range.interval} in UTC. {math === "people" ? "A person is counted once per point, across devices once identify() links them." : "A retried event counts once."}
+          Grouped by {range.interval} in UTC. {math === "people" ? "The total counts each person once for the whole range; each point counts who did it that " + range.interval + ". identify() links a person's devices." : "A retried event counts once."}
         </p>
       </section>
 
@@ -253,15 +278,18 @@ function Trends({ projectId, events }: { projectId: number; events: string[] }) 
   );
 }
 
-function Funnels({ projectId, events }: { projectId: number; events: string[] }) {
-  const [stepsParam, setSteps] = useParam("steps", events.slice(0, 2).join(","));
+function Funnels({ projectId, events, refresh }: TabProps) {
+  const [stepsParam, setStepsParam] = useParam("steps", joinSteps(events.slice(0, 2)));
   const [windowHours, setWindow] = useParam("window", "24");
   const [days, setDays] = useParam("days", "30");
-  const steps = stepsParam.split(",").filter(Boolean);
+  const steps = splitSteps(stepsParam);
+  const setSteps = (next: string[]) => setStepsParam(joinSteps(next));
   const valid = steps.length >= 2;
-  const q = new URLSearchParams({ steps: steps.join(","), window_hours: windowHours, days });
+  const q = new URLSearchParams({ window_hours: windowHours, days });
+  for (const s of steps) q.append("step", s);
   const funnel = useApi<{ steps: FunnelStep[] }>(valid ? `/api/ui/projects/${projectId}/analytics/funnel?${q}` : null);
-  const setStep = (i: number, v: string) => setSteps(steps.map((s, j) => (j === i ? v : s)).join(","));
+  useRefresh(refresh, funnel);
+  const setStep = (i: number, v: string) => setSteps(steps.map((s, j) => (j === i ? v : s)));
   const first = funnel.data?.steps[0]?.people ?? 0;
 
   return (
@@ -281,7 +309,7 @@ function Funnels({ projectId, events }: { projectId: number; events: string[] })
                   ))}
                 </select>
                 {steps.length > 2 && (
-                  <button className="btn ghost small" onClick={() => setSteps(steps.filter((_, j) => j !== i).join(","))} aria-label={`Remove step ${i + 1}`}>
+                  <button className="btn ghost small" onClick={() => setSteps(steps.filter((_, j) => j !== i))} aria-label={`Remove step ${i + 1}`}>
                     Remove
                   </button>
                 )}
@@ -291,7 +319,7 @@ function Funnels({ projectId, events }: { projectId: number; events: string[] })
         </ol>
         <div className="controls">
           {steps.length < 8 && (
-            <button className="btn small" onClick={() => setSteps([...steps, events.find((e) => !steps.includes(e)) ?? events[0]!].join(","))}>
+            <button className="btn small" onClick={() => setSteps([...steps, events.find((e) => !steps.includes(e)) ?? events[0]!])}>
               + Add a step
             </button>
           )}
@@ -349,12 +377,13 @@ function Funnels({ projectId, events }: { projectId: number; events: string[] })
   );
 }
 
-function Retention({ projectId, events }: { projectId: number; events: string[] }) {
+function Retention({ projectId, events, refresh }: TabProps) {
   const [start, setStart] = useParam("start", events[0]!);
   const [ret, setRet] = useParam("return", events[1] ?? events[0]!);
   const [days, setDays] = useParam("days", "14");
   const q = new URLSearchParams({ start, return: ret, days, periods: "7" });
   const res = useApi<{ cohorts: Cohort[]; periods: number }>(`/api/ui/projects/${projectId}/analytics/retention?${q}`);
+  useRefresh(refresh, res);
   const periods = res.data?.periods ?? 7;
   const cohorts = (res.data?.cohorts ?? []).filter((c) => c.people > 0);
 
@@ -364,13 +393,13 @@ function Retention({ projectId, events }: { projectId: number; events: string[] 
       <div className="controls">
         <span className="muted">People who did</span>
         <select aria-label="Starting event" className="select" value={start} onChange={(e) => setStart(e.target.value)}>
-          {events.map((n) => (
+          {(events.includes(start) ? events : [start, ...events]).map((n) => (
             <option key={n}>{n}</option>
           ))}
         </select>
         <span className="muted">then came back to</span>
         <select aria-label="Returning event" className="select" value={ret} onChange={(e) => setRet(e.target.value)}>
-          {events.map((n) => (
+          {(events.includes(ret) ? events : [ret, ...events]).map((n) => (
             <option key={n}>{n}</option>
           ))}
         </select>
