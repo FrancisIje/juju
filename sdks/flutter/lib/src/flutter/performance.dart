@@ -72,9 +72,13 @@ VoidCallback startAppStart(JujuClient client, {DateTime? processStart, Future<vo
   (firstFrame ?? WidgetsBinding.instance.waitUntilFirstFrameRasterized).then((_) {
     timer.cancel();
     if (tx.finished) return;
-    final end = clock.now();
-    tx.startChild('app.start.phase', description: 'First frame', start: initAt).finish(end);
-    tx.finish(end);
+    try {
+      final end = clock.now();
+      tx.startChild('app.start.phase', description: 'First frame', start: initAt).finish(end);
+      tx.finish(end);
+    } catch (_) {
+      tx.discard(); // nobody is listening to this future: an error here would reach the app
+    }
   });
   return () {
     timer.cancel();

@@ -135,8 +135,14 @@ void main() {
       expect(() => Juju.addBreadcrumb('x'), returnsNormally);
     });
 
-    test('a bad DSN fails loudly at init', () {
-      expect(() => Juju.init(const JujuOptions(dsn: 'not-a-dsn')), throwsFormatException);
+    test('a bad DSN leaves juju off and says why, but never stops the app', () async {
+      final logged = <String?>[];
+      final previous = debugPrint;
+      debugPrint = (message, {wrapWidth}) => logged.add(message);
+      addTearDown(() => debugPrint = previous);
+      await Juju.init(const JujuOptions(dsn: 'not-a-dsn'));
+      expect(Juju.client, isNull);
+      expect(logged.single, allOf(contains('[juju] not running'), contains('the DSN must start with https://')));
     });
   });
 

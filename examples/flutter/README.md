@@ -11,6 +11,7 @@ flutter build apk --release      # release: Android only on emulators (Flutter h
 At launch the app asks `http://localhost:8098/config.json` for `{"dsn": "...", "scenario": "none" | "all" | "analytics"}`.
 `analytics` sends a known set of product analytics events (2 `checkout_started`, one before and one after
 `identify('flutter_user_1')`, then 1 `checkout_completed`), so a chart can be checked against exactly what was sent.
+`stress` sends a burst of worst-case errors and logs the longest UI thread stall (run it with the server down).
 `all` triggers a framework error, an async error, a zone error and a handled error. See the `/verify` skill.
 On Android, run `adb reverse tcp:8080 tcp:8080` and `adb reverse tcp:8098 tcp:8098` first.
 

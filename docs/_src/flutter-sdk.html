@@ -114,7 +114,7 @@ footer { color: var(--muted); font-size: 0.9rem; }
     <span class="eyebrow">juju · Phase 4 · Flutter SDK</span>
     <h1>Three error channels, one report</h1>
     <p class="lede">A Flutter app usually keeps running after an uncaught Dart error: a broken widget turns into a grey box, a failed future prints to the log. That makes errors easy to miss. Flutter reports them through three different channels, and <code>juju_flutter</code> listens on all of them.</p>
-    <div class="logline">[phase 4] <b>DONE</b> verified="Android 17 emulator release build + iOS 26.5 simulator debug build" offline_kill="events survived a force-stop and arrived exactly once"</div>
+    <div class="logline">[phase 4] <b>DONE</b> verified="Android 17 emulator release build + iOS 26.5 simulator debug build" offline_kill="events survived a force-stop and arrived exactly once" outage="kill -9 under a running app: app unaffected, 6 of 6 errors stored once"</div>
   </header>
 
   <section id="router">
@@ -189,13 +189,36 @@ build_id: '<span class="hl">b4485c2e0287804e97e466d035d1c91c</span>'
     <h2>How an event gets from the phone to juju</h2>
     <ol class="steps">
       <li><span>The hook builds the event and gives it an id. Every retry reuses that id, so the server can tell a retry from a new error.</span></li>
-      <li><span>The queue is written to <code>juju_queue.json</code> in the app's support folder: first to a temporary file, then renamed over the real one. A rename is atomic, so a kill mid-write leaves the old file intact rather than half-written.</span></li>
+      <li><span>The queue is written to <code>juju_queue.json</code> in the app's support folder: first to a temporary file, then renamed over the real one. A rename is atomic, so a kill mid-write leaves the old file intact rather than half-written. A lone event is saved at once; in a burst, saves are at least 2 seconds apart.</span></li>
       <li><span>After 5 seconds, or 20 events, the batch is sent, gzipped when it's over 1 KB.</span></li>
-      <li><span>If the send fails, retry after 1 s, 2 s, 4 s… up to 60 s, with jitter, and never sooner than the server's <code>Retry-After</code>.</span></li>
+      <li><span>If the send fails, retry after 1 s, 2 s, 4 s… up to 60 s, with jitter, and never sooner than the server's <code>Retry-After</code>, which is obeyed for at most an hour.</span></li>
       <li><span>When the app goes to the background, save and send now. When it comes back, retry straight away.</span></li>
       <li><span>On the next launch, load the saved file before saving anything new, then send what it held.</span></li>
     </ol>
     <div class="why"><span class="label">Why load before saving</span>If an error happened in the first moments after launch and its save ran first, it would overwrite the events left by the previous run before they were read. Every save waits for the load. A test fails if this rule is removed.</div>
+  </section>
+
+  <section id="isolation">
+    <span class="eyebrow">Failure isolation</span>
+    <h2>If juju breaks, the app carries on</h2>
+    <p>A monitoring tool runs inside someone else's app, so its worst possible bug is taking that app down. The rule: <strong>no failure of the server or the SDK may reach the app</strong>. The app loses its reports, never its users. An audit against that rule found these in the SDK as it was, each reproduced before it was fixed:</p>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>What goes wrong</th><th>Before</th><th>Now</th></tr></thead>
+        <tbody>
+          <tr><td>A wrong or empty DSN</td><td><code>init</code> threw, <code>runApp</code> never ran: <strong>stuck on the splash screen</strong></td><td>juju stays off, the log says why, the app runs</td></tr>
+          <tr><td>Device storage stuck</td><td><code>init</code> waited forever: stuck on the splash screen</td><td><code>init</code> returns within 2 s; errors are still reported</td></tr>
+          <tr><td>Server down for a long time</td><td>The backoff overflowed: from minute 24 of a real outage, <strong>about 130,000 attempts a minute</strong></td><td>2 attempts a minute, however long it lasts</td></tr>
+          <tr><td>A nonsense <code>Retry-After</code></td><td>A <code>RangeError</code> reached the app's error handlers, and retries ran about once a second</td><td>Clamped to an hour; nothing reaches the app</td></tr>
+          <tr><td>A <code>DateTime</code> or <code>NaN</code> in an event</td><td>The batch could never be encoded, was retried forever, and <strong>blocked all reporting</strong></td><td>Sent as text; a value that can't be encoded (a cycle) is dropped alone</td></tr>
+          <tr><td>A burst of errors with the server down</td><td>The whole queue was re-encoded for every event: 282–285 missed frame budgets, and the run took over 16 s</td><td>13–21 missed, and the run finishes inside 16 s (see limits)</td></tr>
+          <tr><td>An exception message of many MB</td><td>Up to 100 of them kept in memory</td><td>Cut to 8 KB. Events over 1 MB are dropped; the queue holds at most 8 MB of errors and 8 MB of the rest</td></tr>
+          <tr><td>A bug in juju's request or navigation recording</td><td>The app's successful request failed, or its navigation broke</td><td>Recording fails silently; the app's own work and its own errors are untouched</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="why"><span class="label">Why not an isolate</span>Moving the work off the UI thread sounds like the obvious fix, so it was measured first. Starting an isolate stalled the UI thread for 23–29 ms, longer than the 4–6 ms gzip it would have moved. Encoding the queue in one still stalled for 27–43 ms, against 47–55 ms, because the data has to be copied across. Doing the work less often was the better answer.</div>
+    <div class="why"><span class="label">Why a wrong DSN no longer throws</span>Throwing was meant to make a mistake obvious at startup, but in a release build the person who finds out is the end user. A log line is less loud; a dead app is worse.</div>
   </section>
 
   <section>
@@ -221,6 +244,7 @@ final api = Juju.httpClient(); <span class="c">// an http.Client that records re
     <ul>
       <li><strong>Everything goes inside <code>Juju.runZoned</code></strong>, including <code>ensureInitialized</code> and <code>runApp</code>, so the Flutter binding and the app share one zone. Inside it, <code>print()</code> lines also become breadcrumbs.</li>
       <li><strong>Breadcrumbs never record</strong> request or response bodies, or query strings, which often carry tokens.</li>
+      <li><strong>Safe to <code>await</code> before <code>runApp</code>.</strong> <code>Juju.init</code> never throws and returns within 2 seconds. Don't <code>await Juju.flush()</code> on the way to a screen: with a server that hangs, it waits for the 30-second request timeout.</li>
       <li><strong>No native plugin.</strong> Device details come from Dart and Flutter's own APIs, so installing needs nothing beyond <code>flutter pub add</code>.</li>
     </ul>
   </section>
@@ -240,7 +264,23 @@ final api = Juju.httpClient(); <span class="c">// an http.Client that records re
         </tbody>
       </table>
     </div>
-    <p>The automated suite has 48 tests, using real Dart traces as fixtures. Two were checked by breaking the code on purpose: dropping the previous handler, or the load-before-save rule, makes them fail.</p>
+    <h3>Failure isolation, Android emulator, release build</h3>
+    <div class="panel" style="padding:0">
+      <table>
+        <thead><tr><th>Check</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Server off at launch, 4 errors, server started without relaunching</td><td class="mono">0 stored, app alive; then 4 stored, 4 distinct ids</td></tr>
+          <tr><td><code>kill -9</code> with the app open, tap a button, restart the server</td><td class="mono">same process alive; 5 stored, 5 distinct ids</td></tr>
+          <tr><td><code>kill -9</code>, tap, force-stop the app, restart both</td><td class="mono">"restored 2 event(s)"; 6 stored, 6 distinct ids</td></tr>
+          <tr><td>Bad DSN, before and after, by screenshot</td><td class="mono">splash screen forever → the app's home screen</td></tr>
+          <tr><td>429 with <code>Retry-After: 9000000000000</code>, 12 s</td><td class="mono">10 requests and 10 RangeErrors → 1 request and 0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>18 more cases run against real sockets, including garbage instead of HTTP, connections reset mid-answer, a server that never answers, an endless body, a redirect loop and a failed TLS handshake. The old transport already handled every one of these correctly. The bugs were all in what happened after it answered.</p>
+    <p>The outage soak ran 30 minutes in real time against a closed port, on macOS, at the short end of the jitter. Random jitter moves the point where the old backoff overflowed to between about 24 and 45 minutes.</p>
+    <p>21 of the fixes were checked by putting the bug back: each mutant compiled and made a test fail. Five survived at first, which showed tests too weak to tell the difference, so those tests were made stricter.</p>
+    <p>The automated suite has 139 tests, using real Dart traces as fixtures. Two were checked by breaking the code on purpose: dropping the previous handler, or the load-before-save rule, makes them fail.</p>
     <h3>Found on the devices, fixed afterwards</h3>
     <div class="fixes">
       <div class="fix"><span class="mono">FormatException: FormatException:</span><p>Many Dart errors repeat their type in <code>toString()</code>. The repeat is now dropped from the message.</p></div>
@@ -255,6 +295,9 @@ final api = Juju.httpClient(); <span class="c">// an http.Client that records re
     <h2>Not covered yet</h2>
     <ul>
       <li><strong>Release mode on iOS</strong>, which needs a physical device. No physical device was tested on either platform.</li>
+      <li><strong>One long stall remains in the worst case.</strong> With a full queue of the largest events (about 5 MB), one save still stalls the UI thread for roughly 90–150 ms on the emulator, at most once every 2 seconds and only while the queue is changing. Typical events are far smaller. Not measured on a low-end phone.</li>
+      <li><strong>A kill within 2 seconds of a burst</strong> can lose the newest events. Delivered events can also be sent again after a kill; the server dedupes them by id.</li>
+            <li><strong>No remote off switch.</strong> Turning juju off in shipped apps needs an app release or a flag of the app's own.</li>
       <li><strong>Device model and Android OS version</strong> need a native plugin.</li>
       <li><strong>Obfuscated builds end to end.</strong> The parser is tested with a real non-symbolic trace, but turning addresses back into code is Phase 5.</li>
       <li><strong>Flutter web, errors in other isolates, and native crashes</strong> in Swift or Kotlin.</li>
