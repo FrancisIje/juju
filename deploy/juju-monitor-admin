@@ -1,0 +1,5 @@
+#!/bin/sh
+# juju-admin for the monitoring instance, e.g.
+#   juju-monitor-admin user create -email me@x.com -org platform
+exec systemd-run --quiet --pty --wait --collect --uid=juju-monitor --gid=juju-monitor \
+	-p EnvironmentFile=/etc/juju/monitor.env /usr/local/bin/juju "$@"

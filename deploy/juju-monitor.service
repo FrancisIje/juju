@@ -1,0 +1,33 @@
+# A second juju on the same server, watching the first. Same binary and same
+# sandbox as juju.service, with its own Linux user, queue and port. Postgres
+# keeps the two apart by permission: each user reaches only its own database.
+# ClickHouse keeps them apart by database name only, as both use its default
+# user, so that separation prevents mix-ups rather than a compromised instance.
+[Unit]
+Description=juju monitoring instance
+Requires=postgresql.service
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+User=juju-monitor
+Group=juju-monitor
+EnvironmentFile=/etc/juju/monitor.env
+ExecStart=/usr/local/bin/juju serve
+Restart=on-failure
+RestartSec=2
+
+StateDirectory=juju-monitor
+WorkingDirectory=/var/lib/juju-monitor
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -78,6 +78,9 @@ type Config struct {
 	ClickHouseUser      string // JUJU_CLICKHOUSE_USER
 	ClickHousePassword  string // JUJU_CLICKHOUSE_PASSWORD
 	ClickHouseDatabase  string // JUJU_CLICKHOUSE_DATABASE, default juju
+	// JUJU_MONITOR_DSN: a project on a second juju instance that this server
+	// reports its own errors and health to. Empty turns that off.
+	MonitorDSN string
 }
 
 const DefaultDatabaseURL = "postgres://juju:juju@localhost:5432/juju?sslmode=disable"
@@ -100,6 +103,7 @@ func Load() (Config, error) {
 		ClickHouseUser:     getenv("JUJU_CLICKHOUSE_USER", ""),
 		ClickHousePassword: getenv("JUJU_CLICKHOUSE_PASSWORD", ""),
 		ClickHouseDatabase: getenv("JUJU_CLICKHOUSE_DATABASE", "juju"),
+		MonitorDSN:         getenv("JUJU_MONITOR_DSN", ""),
 	}
 	var err error
 	if c.QueueMaxMB, err = getint("JUJU_QUEUE_MAX_MB", 1024); err != nil {

@@ -8,6 +8,13 @@ DOMAIN {
 	reverse_proxy 127.0.0.1:8080
 }
 
+# The monitoring instance (juju-monitor.service): a second juju that the first
+# reports to. Its own name, so its login cookie is separate from the main one.
+monitor.DOMAIN {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8081
+}
+
 # The web example app (deploy.sh demo), a static site on its own origin,
 # like a real app: its errors go to DOMAIN across origins (CORS).
 demo.DOMAIN {

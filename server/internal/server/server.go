@@ -24,6 +24,7 @@ import (
 	"juju/internal/ingest"
 	"juju/internal/live"
 	"juju/internal/queue"
+	"juju/internal/selfmon"
 	"juju/internal/store"
 	"juju/internal/symbolicate"
 	"juju/internal/ui"
@@ -49,7 +50,8 @@ type Deps struct {
 	Analytics *analytics.Client // nil: analytics off
 	// QueueReady reports whether the queue can be reached, for /readyz.
 	QueueReady func() bool
-	Limits     *ingest.Limits // nil: no rate limits or quotas
+	Limits     *ingest.Limits   // nil: no rate limits or quotas
+	Monitor    *selfmon.Monitor // nil: this server doesn't report on itself
 	Config     config.Config
 	Log        *slog.Logger
 }
@@ -109,7 +111,7 @@ func Routes(d Deps) http.Handler {
 	if roles.API {
 		mux.Handle("/", web.Handler()) // everything else is the dashboard
 	}
-	return securityHeaders(mux, strings.HasPrefix(d.Config.PublicURL, "https://"))
+	return securityHeaders(d.Monitor.Recover(mux), strings.HasPrefix(d.Config.PublicURL, "https://"))
 }
 
 // securityHeaders adds headers every response should have, API or page.
@@ -148,6 +150,21 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	roles := cfg.Roles
 	if roles == (config.Roles{}) {
 		roles = config.Roles{Ingest: true, Worker: true, API: true}
+	}
+	// First, so everything after it logs through the reporting handler, and
+	// closed last (defers run in reverse), so errors during shutdown go out too.
+	var mon *selfmon.Monitor
+	if cfg.MonitorDSN != "" {
+		m, err := selfmon.New(selfmon.Options{DSN: cfg.MonitorDSN, PublicURL: cfg.PublicURL, Log: log})
+		if err != nil {
+			// Logged, not returned: a typo in a monitoring setting must not
+			// keep the server it monitors from starting.
+			log.Error("self-monitoring is off", "err", err)
+		} else {
+			mon = m
+			defer mon.Close()
+			log = slog.New(mon.Handler(log.Handler()))
+		}
 	}
 	st := store.New(pool)
 	blobs, err := blob.New(filepath.Join(cfg.DataDir, "blobs"))
@@ -248,10 +265,13 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 	if q != nil {
 		publisher = q
 		queueReady = func() bool { return q.Conn().IsConnected() }
+		if roles.Worker {
+			go mon.Watch(ctx, platformBacklogs(q, cfg))
+		}
 	}
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: publisher, QueueReady: queueReady, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}, Alerts: alerts, Live: hub, Changes: changes, Analytics: ch, Limits: limits, Config: cfg, Log: log}),
+		Handler:           Routes(Deps{Pool: pool, Store: st, Queue: publisher, QueueReady: queueReady, Blobs: blobs, MaxUpload: int64(cfg.MaxUploadMB) << 20, Auth: &auth.Service{Store: st, SecureCookies: strings.HasPrefix(cfg.PublicURL, "https://")}, Alerts: alerts, Live: hub, Changes: changes, Analytics: ch, Limits: limits, Monitor: mon, Config: cfg, Log: log}),
 		ReadHeaderTimeout: 5 * time.Second,  // slow clients can't hold connections open forever
 		ReadTimeout:       30 * time.Second, // a 1 MB body on a bad mobile network
 		WriteTimeout:      30 * time.Second,
@@ -303,6 +323,23 @@ func Run(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *slog.L
 		log.Info("shutdown complete", "events_waiting_in_queue", left)
 	}
 	return runErr
+}
+
+// platformBacklogs is what the monitor watches. A growing queue means workers
+// can't keep up or Postgres is failing. A growing analytics queue usually
+// means ClickHouse is down, which the server otherwise survives quietly.
+func platformBacklogs(q *queue.JetStream, cfg config.Config) []selfmon.Backlog {
+	b := []selfmon.Backlog{{
+		Type: "platform.queue_backlog", Label: "events waiting in the queue", Key: "queue_pending",
+		Max: 1000, Read: q.Pending,
+	}}
+	if cfg.ClickHouseURL != "" {
+		b = append(b, selfmon.Backlog{
+			Type: "platform.analytics_backlog", Label: "analytics events waiting for ClickHouse", Key: "analytics_pending",
+			Max: 10000, Read: q.AnalyticsPending,
+		})
+	}
+	return b
 }
 
 // runRetention deletes expired data every hour until ctx is done. It runs
