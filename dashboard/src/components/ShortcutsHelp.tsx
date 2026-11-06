@@ -3,6 +3,7 @@ const groups: [string, [string, string][]][] = [
   ["Issue list", [["j / k", "Move down / up"], ["Enter or o", "Open the issue"], ["x", "Select for bulk actions"], ["r", "Resolve"], ["i", "Ignore"], ["u", "Mark unresolved"], ["/", "Search"]]],
   ["Performance", [["j / k", "Move down / up"], ["Enter or o", "Open the transaction"], ["[ / ]", "Previous / next sample"], ["← → on a chart", "Read each point"], ["Esc", "Back to the list"]]],
   ["Analytics", [["1 / 2 / 3", "Trends / funnels / retention"], ["← / →", "Move along the chart (when it has focus)"]]],
+  ["Super admin", [["/", "Search"]]],
   ["Issue page", [["r / i / u", "Resolve / ignore / mark unresolved"], ["[ / ]", "Newer / older event"], ["1 – 4", "Stack trace, breadcrumbs, context, raw JSON"], ["Esc", "Back to the list"]]],
 ];
 
