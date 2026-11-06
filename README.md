@@ -45,6 +45,18 @@ also add people from the shell: `go run ./cmd/juju user create -email ada@exampl
 (on a VPS: `juju-admin user create …`). New projects show their
 DSN and setup code for each SDK; the secret key is shown once.
 
+To watch every organization and project on your server, make your account a super admin from the
+server's shell, then open **Super admin** in the sidebar (`/admin`):
+
+```bash
+juju-admin user superadmin -email you@example.com          # grant (go run ./cmd/juju … locally)
+juju-admin user superadmin                                 # list who has it
+juju-admin user superadmin -email you@example.com -revoke  # take it away, effective at once
+```
+
+It shows counts and each organization's members. It doesn't show issue details or keys, and it
+doesn't let you into a project unless you belong to its organization.
+
 - Keyboard first: `⌘K` jumps anywhere, `j`/`k` move, `r`/`i`/`u` resolve, ignore, unresolve, `?` lists the rest.
 - Alerts: Settings → Alerts posts new issues and regressions to a Slack incoming webhook or email
   (`JUJU_SMTP_ADDR`, `JUJU_SMTP_USER`, `JUJU_SMTP_PASSWORD`, `JUJU_SMTP_FROM`). Webhooks must be https and on the
@@ -210,7 +222,7 @@ In Claude Code, run `/verify` after any change: it writes tests and checks the c
 
 ```
 server/
-  cmd/juju/            the binary: serve, migrate, project create/limits, user create, upload
+  cmd/juju/            the binary: serve, migrate, project create/limits, user create/superadmin, upload
   cmd/devdb/           local Postgres without Docker (-port for a second checkout)
   internal/event/      v1 wire format, validation and repair rules
   internal/fingerprint grouping events into issues

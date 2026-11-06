@@ -6,6 +6,7 @@
 //	juju upload -kind sourcemap -release R dir/  upload debug files for symbolication
 //	juju release -name R                     record the git commit release R was built from
 //	juju user create -email E -org O         add a dashboard account (asks for a password)
+//	juju user superadmin [-email E [-revoke]] list, grant or revoke super admins
 package main
 
 import (
@@ -38,7 +39,8 @@ const usage = `usage:
   juju sourcemaps inject PATH...
   juju upload -kind sourcemap|dart_symbols [-release R] PATH...
   juju release -name R [-commit SHA] [-repo URL]
-  juju user create -email EMAIL -org NAME [-name NAME]`
+  juju user create -email EMAIL -org NAME [-name NAME]
+  juju user superadmin [-email EMAIL [-revoke]]`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -93,10 +95,16 @@ func run(args []string) error {
 		}
 		return errors.New(usage)
 	case "user":
-		if len(args) < 2 || args[1] != "create" {
+		if len(args) < 2 {
 			return errors.New(usage)
 		}
-		return createUser(ctx, cfg, args[2:])
+		switch args[1] {
+		case "create":
+			return createUser(ctx, cfg, args[2:])
+		case "superadmin":
+			return superAdmin(ctx, cfg, args[2:])
+		}
+		return errors.New(usage)
 	default:
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
@@ -286,5 +294,51 @@ func createUser(ctx context.Context, cfg config.Config, args []string) error {
 		return err
 	}
 	fmt.Printf("created %s (id %d), owner of %q\n", u.Email, u.ID, *org)
+	return nil
+}
+
+// superAdmin grants or revokes super admin, then lists who has it. This is
+// the only way to change it: there's no HTTP endpoint, so a bug in the web
+// app or a stolen session can't make anyone a super admin. Running it takes
+// access to the server, which already gives access to everything.
+func superAdmin(ctx context.Context, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("user superadmin", flag.ContinueOnError)
+	email := fs.String("email", "", "the account to change; leave out to only list super admins")
+	revoke := fs.Bool("revoke", false, "take super admin away instead of granting it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *revoke && *email == "" {
+		return errors.New("-revoke needs -email")
+	}
+	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := db.Migrate(ctx, pool, "up"); err != nil {
+		return err
+	}
+	st := store.New(pool)
+	if *email != "" {
+		addr := auth.NormalizeEmail(*email)
+		err := st.SetSuperAdmin(ctx, addr, !*revoke)
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("no account uses %s; sign up or run `juju user create` first", addr)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	admins, err := st.SuperAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if len(admins) == 0 {
+		fmt.Println("no super admins")
+	}
+	for _, u := range admins {
+		fmt.Printf("%s (id %d)\n", u.Email, u.ID)
+	}
 	return nil
 }

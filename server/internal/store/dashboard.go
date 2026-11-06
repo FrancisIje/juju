@@ -22,6 +22,9 @@ type User struct {
 	Email     string    `json:"email"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
+	// IsSuperAdmin can see every organization on the server (see package ui's
+	// superAdmin). Only `juju user superadmin` sets it.
+	IsSuperAdmin bool `json:"is_superadmin,omitempty"`
 }
 
 // CountUsers is used to allow the very first sign-up (setting up a new
@@ -91,8 +94,8 @@ func (s *Store) CreateUser(ctx context.Context, email, name, passwordHash, org s
 func (s *Store) UserByEmail(ctx context.Context, email string) (User, string, error) {
 	var u User
 	var hash string
-	err := s.pool.QueryRow(ctx, `SELECT id, email, name, created_at, password_hash FROM users WHERE email = $1`, email).
-		Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt, &hash)
+	err := s.pool.QueryRow(ctx, `SELECT id, email, name, created_at, is_superadmin, password_hash FROM users WHERE email = $1`, email).
+		Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt, &u.IsSuperAdmin, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, "", ErrNotFound
 	}
@@ -109,10 +112,10 @@ func (s *Store) SessionUser(ctx context.Context, tokenHash []byte) (User, time.T
 	var u User
 	var expires time.Time
 	err := s.pool.QueryRow(ctx, `
-		SELECT u.id, u.email, u.name, u.created_at, s.expires_at
+		SELECT u.id, u.email, u.name, u.created_at, u.is_superadmin, s.expires_at
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND s.expires_at > now()`, tokenHash).
-		Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt, &expires)
+		Scan(&u.ID, &u.Email, &u.Name, &u.CreatedAt, &u.IsSuperAdmin, &expires)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, time.Time{}, ErrNotFound
 	}

@@ -78,12 +78,13 @@ func (s *Store) AddUsage(ctx context.Context, month time.Time, counts map[int64]
 	// A project deleted since the events arrived would break the foreign
 	// key, so join against projects and skip it.
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO project_usage (project_id, month, accepted)
-		SELECT u.id, $1, u.n
+		INSERT INTO project_usage (project_id, month, accepted, last_accepted_at)
+		SELECT u.id, $1, u.n, now()
 		FROM unnest($2::bigint[], $3::bigint[]) AS u(id, n)
 		JOIN projects p ON p.id = u.id
 		ON CONFLICT (project_id, month) DO UPDATE
-		SET accepted = project_usage.accepted + EXCLUDED.accepted`,
+		SET accepted = project_usage.accepted + EXCLUDED.accepted,
+		    last_accepted_at = EXCLUDED.last_accepted_at`,
 		month, ids, ns)
 	return err
 }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Shell } from "./components/Shell";
 import { api, ApiError, setUnauthorizedHandler, type Me } from "./lib/api";
-import { AppContext, type AppState } from "./lib/app";
+import { useApp, AppContext, type AppState } from "./lib/app";
 import { match, navigate, safeNext, useLocation } from "./lib/router";
+import { Admin, AdminOrganization } from "./pages/Admin";
 import { Analytics, type AnalyticsTab } from "./pages/Analytics";
 import { Issue } from "./pages/Issue";
 import { Issues } from "./pages/Issues";
@@ -129,7 +130,26 @@ export function App() {
 }
 
 function Routed({ path, query }: { path: string; query: URLSearchParams }) {
+  const { me } = useApp();
   let m: Record<string, string> | null;
+  // Hiding these from others is only tidiness, so they get the ordinary
+  // not-found page below. What protects the data is the server's own check.
+  if (me.user.is_superadmin) {
+    if ((m = match("/admin/orgs/:org", path))) {
+      return (
+        <Shell projectId={null}>
+          <AdminOrganization key={m.org} orgId={m.org!} />
+        </Shell>
+      );
+    }
+    if (path === "/admin" || path === "/admin/organizations" || path === "/admin/projects") {
+      return (
+        <Shell projectId={null}>
+          <Admin tab={path === "/admin/projects" ? "projects" : "organizations"} />
+        </Shell>
+      );
+    }
+  }
   if ((m = match("/p/:project/issues/:issue", path))) {
     return (
       <Shell projectId={Number(m.project)}>

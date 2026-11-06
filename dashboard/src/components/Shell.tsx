@@ -68,6 +68,12 @@ export function Shell({ projectId, children }: { projectId: number | null; child
     for (const p of projects) {
       if (p.id !== projectId) list.push({ id: `proj-${p.id}`, group: "Switch project", label: `${p.org} / ${p.name}`, run: () => navigate(`/p/${p.id}/issues`) });
     }
+    if (me.user.is_superadmin) {
+      list.push(
+        { id: "admin-orgs", group: "Go to", label: "Super admin: Organizations", run: () => navigate("/admin/organizations") },
+        { id: "admin-projects", group: "Go to", label: "Super admin: Projects", run: () => navigate("/admin/projects") },
+      );
+    }
     for (const o of me.organizations) list.push({ id: `new-${o.id}`, group: "Create", label: `New project in ${o.name}`, run: () => navigate(`/new?org=${o.id}`) });
     list.push(
       { id: "theme", group: "Preferences", label: "Change theme (system, dark, light)", run: cycleTheme },
@@ -161,6 +167,12 @@ export function Shell({ projectId, children }: { projectId: number | null; child
             </Link>
           )}
         </div>
+        {me.user.is_superadmin && (
+          <div className="nav">
+            <span className="nav-label">Super admin</span>
+            {nav("/admin", "Organizations and projects")}
+          </div>
+        )}
         <div className="sidebar-foot">
           <div className="divider" />
           <span className="faint" style={{ fontSize: "var(--text-xs)", padding: "0 var(--space-2)" }}>

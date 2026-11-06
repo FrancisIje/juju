@@ -82,6 +82,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerTeam(mux)
 	a.registerPerformance(mux)
 	a.registerAnalytics(mux)
+	a.registerAdmin(mux)
 }
 
 type projectHandler func(w http.ResponseWriter, r *http.Request, projectID int64, user store.User)
