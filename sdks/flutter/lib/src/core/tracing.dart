@@ -35,8 +35,10 @@ class JujuSpan {
   /// Ends the span. Calling it again does nothing.
   void finish([DateTime? at]) {
     if (end != null) return;
-    end = at ?? clock.now();
-    _tx?._activity(end!);
+    try {
+      end = at ?? clock.now();
+      _tx?._activity(end!);
+    } catch (_) {} // the app is timing its own work: a failure here isn't its problem
   }
 
   JsonMap toJson(DateTime txEnd) => {
@@ -52,6 +54,16 @@ class JujuSpan {
 
 /// A span that records nothing: returned when there's no transaction to join.
 JujuSpan noopSpan() => JujuSpan._(null, 'noop', null, DateTime.fromMillisecondsSinceEpoch(0), null, '');
+
+/// A transaction that records and sends nothing: for when juju isn't running,
+/// so the app's timing code doesn't need to check.
+JujuTransaction inertTransaction(String name, String op) =>
+    JujuTransaction(_InertHost(), name: name, op: op, start: DateTime.fromMillisecondsSinceEpoch(0), sampled: false);
+
+class _InertHost implements TransactionHost {
+  @override
+  void finishTransaction(JujuTransaction tx) {}
+}
 
 /// Spans beyond this are ignored: a polling loop mustn't grow a transaction forever.
 const maxSpans = 500;
@@ -106,11 +118,15 @@ class JujuTransaction {
 
   JujuSpan startChild(String op, {String? description, JsonMap? data, DateTime? start}) {
     if (finished || spans.length >= maxSpans) return noopSpan();
-    final span = JujuSpan._(this, op, description, start ?? clock.now(), data, _spanId());
-    spans.add(span);
-    _open++;
-    _cancelIdle();
-    return span;
+    try {
+      final span = JujuSpan._(this, op, description, start ?? clock.now(), data, _spanId());
+      spans.add(span);
+      _open++;
+      _cancelIdle();
+      return span;
+    } catch (_) {
+      return noopSpan();
+    }
   }
 
   /// Keeps an idle transaction open until the returned function is called,
@@ -123,7 +139,9 @@ class JujuTransaction {
     return ([at]) {
       if (released) return;
       released = true;
-      _activity(at ?? clock.now());
+      try {
+        _activity(at ?? clock.now());
+      } catch (_) {}
     };
   }
 
@@ -134,9 +152,15 @@ class JujuTransaction {
   /// Ends the transaction and hands it to the client to send.
   void finish([DateTime? at]) {
     if (finished) return;
-    end = at ?? clock.now();
     _cancelIdle();
     _deadlineTimer?.cancel();
+    try {
+      end = at ?? clock.now();
+    } catch (_) {
+      // Without a time there's nothing to send, but it's still finished.
+      end = start;
+      sampled = false;
+    }
     // Spans still open at the end (a request that never answered) end with
     // the transaction, marked so nobody mistakes them for fast requests.
     for (final s in spans) {

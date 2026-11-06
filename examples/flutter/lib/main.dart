@@ -110,6 +110,44 @@ final scenarios = <String, void Function(BuildContext)>{
   },
 };
 
+/// What juju costs the app in a bad moment: a burst of errors with deep stacks
+/// and full breadcrumbs, the worst case per event. Run with the server down, so
+/// the queue only grows. A frame has 16 ms, and it can't start while the UI
+/// thread is busy, so a late timer is a dropped frame.
+Future<void> runStress() async {
+  final deep = StackTrace.fromString(
+    List.generate(
+      300,
+      (i) =>
+          '#$i      StatelessElement.build (package:flutter/src/widgets/framework.dart:5689:${i + 1})',
+    ).join('\n'),
+  );
+  for (var i = 0; i < 100; i++) {
+    Juju.addBreadcrumb(
+      'http',
+      message: 'GET https://api.example.com/items/$i → 200',
+      data: {'status': 200, 'url': 'https://api.example.com/items/$i'},
+    );
+  }
+  var worst = 0, late = 0;
+  var last = DateTime.now();
+  final tick = Timer.periodic(const Duration(milliseconds: 8), (_) {
+    final now = DateTime.now();
+    final over = now.difference(last).inMilliseconds - 8;
+    if (over > worst) worst = over;
+    if (over > 16) late++;
+    last = now;
+  });
+  for (var i = 0; i < 300; i++) {
+    Juju.captureException(StateError('stress $i'), deep);
+    Juju.capture('stress_tap');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  tick.cancel();
+  // ignore: avoid_print
+  print('[stress] worst_stall_ms=$worst missed_frame_budget=$late');
+}
+
 class ExampleApp extends StatelessWidget {
   const ExampleApp({
     super.key,
@@ -178,6 +216,11 @@ class _HomePageState extends State<HomePage> {
       Navigator.of(context).pop();
       await Juju.flush();
       add('opened and closed the cart');
+      return;
+    }
+    if (widget.scenario == 'stress') {
+      await runStress();
+      add('stress finished');
       return;
     }
     if (widget.scenario == 'analytics') {

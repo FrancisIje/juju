@@ -8,9 +8,9 @@
 ///     });
 /// ```
 ///
-/// Every method except [Juju.init] is safe to call before init (it does
-/// nothing) and never throws. init throws a FormatException on an invalid
-/// DSN, so a configuration mistake is noticed at startup.
+/// Whatever happens to juju's server or to this SDK, the app carries on: no
+/// method here throws, [Juju.init] included, and before init (or after a failed
+/// one) they do nothing. A wrong DSN leaves juju off and says so in the log.
 library;
 
 import 'dart:async';
@@ -98,6 +98,10 @@ class JujuOptions {
   final double sampleRate;
 }
 
+/// The longest [Juju.init] can hold back the app's start, when the device's
+/// storage is slow or stuck. Loading carries on in the background after it.
+const initBudget = Duration(seconds: 2);
+
 abstract final class Juju {
   static JujuClient? _client;
   static final List<VoidCallback> _uninstallers = [];
@@ -108,7 +112,20 @@ abstract final class Juju {
 
   static JujuClient? get client => _client;
 
+  /// Starts juju. Safe to `await` before `runApp`: it never throws, and returns
+  /// within [initBudget]. If juju can't start, the app runs without it.
   static Future<void> init(JujuOptions options) async {
+    try {
+      await _init(options);
+    } catch (e) {
+      close(); // undo whatever was installed before the failure
+      // Printed even without options.debug: juju is off, and someone setting
+      // up the SDK needs to find out why. A bad DSN says what's wrong with it.
+      debugPrint('[juju] not running, the app carries on without it: $e');
+    }
+  }
+
+  static Future<void> _init(JujuOptions options) async {
     close(); // calling init twice replaces the old setup instead of doubling every hook
     final binding = WidgetsFlutterBinding.ensureInitialized();
     final client = JujuClient(ClientOptions(
@@ -148,9 +165,14 @@ abstract final class Juju {
     // the saved queue loads, so init doesn't wait for one after the other.
     // Still before runApp, so the app start exists before any request the
     // app makes while starting.
-    final processStart = options.tracing ? processStartTime() : Future<DateTime?>.value();
-    await client.ready;
-    if (options.tracing && identical(_client, client)) _uninstallers.add(startAppStart(client, processStart: await processStart));
+    // Neither may hold up the app's start for long.
+    DateTime? processStart;
+    final startRead = (options.tracing ? processStartTime() : Future<DateTime?>.value()).then((t) => processStart = t);
+    await Future.wait<Object?>([client.ready, startRead]).timeout(initBudget, onTimeout: () {
+      if (options.debug) debugPrint('[juju] storage is slow, not waiting for it');
+      return const [];
+    });
+    if (options.tracing && identical(_client, client)) _uninstallers.add(startAppStart(client, processStart: processStart));
   }
 
   /// Runs [body] in a zone that reports errors no other hook sees (for
@@ -201,7 +223,7 @@ abstract final class Juju {
   ///
   /// Before init it returns a transaction that sends nothing.
   static JujuTransaction startTransaction(String name, {String op = 'custom'}) =>
-      _client?.startTransaction(name, op) ?? JujuTransaction(_Inert(), name: name, op: op, sampled: false);
+      _client?.startTransaction(name, op) ?? inertTransaction(name, op);
 
   /// An http.Client that records each request as a breadcrumb, and as a
   /// span of the app start or screen load it happens during.
@@ -228,9 +250,4 @@ abstract final class Juju {
 
   @visibleForTesting
   static SendResult classifyStatus(int status, [String? retryAfter]) => classify(status, retryAfter);
-}
-
-class _Inert implements TransactionHost {
-  @override
-  void finishTransaction(JujuTransaction tx) {}
 }

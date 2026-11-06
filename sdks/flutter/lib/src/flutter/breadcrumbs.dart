@@ -2,11 +2,20 @@ import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/client.dart';
+import '../core/tracing.dart';
 import 'performance.dart';
 
 // Breadcrumbs record what led up to an error. Privacy: we record methods,
 // URL paths, status codes and route names. Never request or response
 // bodies, or query strings, which often carry tokens.
+
+// These classes run inside the app's own work: its navigation, its network
+// requests, its lifecycle callbacks. If recording fails, that work carries on.
+void _quietly(void Function() record) {
+  try {
+    record();
+  } catch (_) {}
+}
 
 /// Records screen changes. Add it to your app's navigator:
 ///
@@ -18,19 +27,19 @@ class JujuNavigatorObserver extends NavigatorObserver {
   final bool Function() _tracing;
 
   @override
-  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    _record(previousRoute, route, 'push');
-    _timeLoad(route, previousRoute);
-  }
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) => _quietly(() {
+        _record(previousRoute, route, 'push');
+        _timeLoad(route, previousRoute);
+      });
 
   @override
-  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => _record(route, previousRoute, 'pop');
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => _quietly(() => _record(route, previousRoute, 'pop'));
 
   @override
-  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
-    _record(oldRoute, newRoute, 'replace');
-    if (newRoute != null) _timeLoad(newRoute, oldRoute);
-  }
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) => _quietly(() {
+        _record(oldRoute, newRoute, 'replace');
+        if (newRoute != null) _timeLoad(newRoute, oldRoute);
+      });
 
   /// A newly pushed screen gets a screen.load transaction. Popping back
   /// shows a screen that's already built, so there's nothing to time; and
@@ -60,12 +69,28 @@ class JujuHttpClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final url = redact(request.url);
     final started = DateTime.now();
-    // Joins the app start or screen load that's running, if any.
-    final span = _client()?.startSpan('http.client', description: '${request.method} $url', data: {'method': request.method, 'url': url});
+    var url = '';
+    JujuSpan? span;
+    _quietly(() {
+      url = redact(request.url);
+      // Joins the app start or screen load that's running, if any.
+      span = _client()?.startSpan('http.client', description: '${request.method} $url', data: {'method': request.method, 'url': url});
+    });
+    final http.StreamedResponse res;
     try {
-      final res = await _inner.send(request);
+      res = await _inner.send(request);
+    } catch (e) {
+      _quietly(() {
+        _client()?.addBreadcrumb('http',
+            message: '${request.method} $url → failed', data: {'method': request.method, 'url': url, 'error': '$e'});
+        span
+          ?..status = 'failed'
+          ..finish();
+      });
+      rethrow; // the app's own error, unchanged
+    }
+    _quietly(() {
       span
         ?..setData('status_code', res.statusCode)
         ..status = res.statusCode >= 500 ? 'error' : 'ok'
@@ -76,15 +101,8 @@ class JujuHttpClient extends http.BaseClient {
         'status': res.statusCode,
         'duration_ms': DateTime.now().difference(started).inMilliseconds,
       });
-      return res;
-    } catch (e) {
-      _client()
-          ?.addBreadcrumb('http', message: '${request.method} $url → failed', data: {'method': request.method, 'url': url, 'error': '$e'});
-      span
-        ?..status = 'failed'
-        ..finish();
-      rethrow;
-    }
+    });
+    return res;
   }
 
   @override
@@ -110,17 +128,17 @@ class JujuLifecycleObserver with WidgetsBindingObserver {
   AppLifecycleState? _last;
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == _last) return;
-    _client.addBreadcrumb('app', message: '${_last?.name ?? 'start'} → ${state.name}');
-    _last = state;
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      if (sessions) _client.pauseSession(); // before saving, so the saved queue has it
-      _client.persistNow();
-      _client.flush();
-    } else if (state == AppLifecycleState.resumed) {
-      if (sessions) _client.resumeSession();
-      _client.retryNow();
-    }
-  }
+  void didChangeAppLifecycleState(AppLifecycleState state) => _quietly(() {
+        if (state == _last) return;
+        _client.addBreadcrumb('app', message: '${_last?.name ?? 'start'} → ${state.name}');
+        _last = state;
+        if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+          if (sessions) _client.pauseSession(); // before saving, so the saved queue has it
+          _client.persistNow();
+          _client.flush();
+        } else if (state == AppLifecycleState.resumed) {
+          if (sessions) _client.resumeSession();
+          _client.retryNow();
+        }
+      });
 }
