@@ -27,8 +27,14 @@ if ! dpkg -s clickhouse-server 2>/dev/null | grep -q "^Version: $CLICKHOUSE_VERS
 	curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key | gpg --dearmor --yes -o /usr/share/keyrings/clickhouse-keyring.gpg
 	echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://packages.clickhouse.com/deb stable main" > /etc/apt/sources.list.d/clickhouse.list
 	apt-get update -q
-	apt-get install -yq "clickhouse-server=$CLICKHOUSE_VERSION" "clickhouse-client=$CLICKHOUSE_VERSION" "clickhouse-common-static=$CLICKHOUSE_VERSION"
+	# --allow-downgrades: a server set up before the hold below had ClickHouse
+	# upgraded past the pin by `apt-get upgrade`; this puts it back.
+	apt-get install -yq --allow-downgrades --allow-change-held-packages \
+		"clickhouse-server=$CLICKHOUSE_VERSION" "clickhouse-client=$CLICKHOUSE_VERSION" "clickhouse-common-static=$CLICKHOUSE_VERSION"
 fi
+# Held, so `apt-get upgrade` above leaves ClickHouse at the tested version on
+# the next run. Changing the version is done here, by changing the pin.
+apt-mark hold clickhouse-server clickhouse-client clickhouse-common-static
 install -m 644 clickhouse.xml /etc/clickhouse-server/config.d/juju.xml
 systemctl enable clickhouse-server
 systemctl restart clickhouse-server
