@@ -105,8 +105,47 @@ sed -i "s|^JUJU_PUBLIC_URL=.*|JUJU_PUBLIC_URL=https://$DOMAIN|" /etc/juju/juju.e
 chown root:juju /etc/juju/juju.env
 chmod 640 /etc/juju/juju.env
 
+echo "==> monitoring instance"
+# A second juju that watches the first. Same peer auth as above, under its own
+# user, so it can't reach the main database. Both share this server's Postgres
+# and ClickHouse, each in its own database.
+id juju-monitor >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin juju-monitor
+cd /tmp
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='juju-monitor'" | grep -q 1 || sudo -u postgres createuser juju-monitor
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='juju_monitor'" | grep -q 1 || sudo -u postgres createdb -O juju-monitor juju_monitor
+cd - >/dev/null
+if [ ! -f /etc/juju/monitor.env ]; then
+	# Small limits and short retention: this shares a disk with production,
+	# and its data is worth far less. JUJU_MONITOR_DSN is deliberately absent:
+	# a monitor that reported to itself could only make an incident worse.
+	cat > /etc/juju/monitor.env <<EOF
+JUJU_ADDR=127.0.0.1:8081
+JUJU_DATABASE_URL=postgres://juju-monitor@/juju_monitor?host=/var/run/postgresql
+JUJU_DATA_DIR=/var/lib/juju-monitor
+JUJU_PUBLIC_URL=https://monitor.$DOMAIN
+JUJU_CLICKHOUSE_URL=http://127.0.0.1:8123
+JUJU_CLICKHOUSE_DATABASE=juju_monitor
+JUJU_ALLOW_SIGNUP=false
+JUJU_RETENTION_DAYS=30
+JUJU_ANALYTICS_RETENTION_DAYS=90
+JUJU_QUEUE_MAX_MB=128
+JUJU_ANALYTICS_QUEUE_MAX_MB=64
+JUJU_WORKERS=1
+EOF
+fi
+sed -i "s|^JUJU_PUBLIC_URL=.*|JUJU_PUBLIC_URL=https://monitor.$DOMAIN|" /etc/juju/monitor.env
+# systemd reads this file as root, so the monitor's user never needs access
+# to anything else in /etc/juju, including juju.env.
+chown root:root /etc/juju/monitor.env
+chmod 600 /etc/juju/monitor.env
+# Turn on reporting in the main instance's juju.env once the monitor has a
+# project (see the steps printed at the end of this script).
+grep -q 'JUJU_MONITOR_DSN=' /etc/juju/juju.env || echo '#JUJU_MONITOR_DSN=' >> /etc/juju/juju.env
+
 echo "==> services"
 install -m 644 juju.service /etc/systemd/system/juju.service
+install -m 644 juju-monitor.service /etc/systemd/system/juju-monitor.service
+install -m 755 juju-monitor-admin /usr/local/bin/juju-monitor-admin
 sed "s/DOMAIN {/$DOMAIN {/" Caddyfile > /etc/caddy/Caddyfile
 # The web example's files (deploy.sh demo puts them here).
 install -d -m 755 /var/www/juju-demo
@@ -117,7 +156,14 @@ systemctl daemon-reload
 systemctl enable juju
 # Restarts only if already running, so it picks up a changed juju.env.
 systemctl try-restart juju
+systemctl enable juju-monitor
+# A fresh server has no binary yet: the first release starts the monitor.
+if [ -x /usr/local/bin/juju ]; then systemctl restart juju-monitor; fi
 systemctl reload-or-restart caddy
 
 echo "==> done. Next, from your laptop: deploy/deploy.sh release <host>"
+echo "    Monitoring: point monitor.$DOMAIN at this server in DNS, then on the server:"
+echo "      juju-monitor-admin user create -email YOU -org platform"
+echo "      juju-monitor-admin project create -org platform -name juju"
+echo "    Put that project's DSN in /etc/juju/juju.env as JUJU_MONITOR_DSN, then: systemctl restart juju"
 echo "    The web example will be at https://demo.$DOMAIN after deploy/deploy.sh demo <host>"

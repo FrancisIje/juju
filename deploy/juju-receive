@@ -36,6 +36,13 @@ install)
 	systemctl restart juju
 	if ready; then
 		echo "==> juju is up"
+		# Only after production passed, so during a bad deploy the monitor is
+		# still running the old code and can see what happens. It can't fail
+		# the deploy: production is fine, and rolling it back wouldn't help.
+		# enabled, not try-restart: the first release has to start it as well.
+		if systemctl -q is-enabled juju-monitor 2>/dev/null; then
+			systemctl restart juju-monitor || echo "warning: the monitoring instance did not restart" >&2
+		fi
 		exit 0
 	fi
 	echo "juju did not become ready:" >&2

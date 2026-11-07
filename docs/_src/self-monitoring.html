@@ -1,0 +1,215 @@
+<title>juju Self-Monitoring</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: same system as the other juju pages. One reading column: the problem, the map of who watches what, the rules that keep monitoring harmless, setup, evidence, limits. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #141a22;
+  --muted: #56606e;
+  --line: #d9dee5;
+  --accent: #6d28d9;
+  --accent-soft: #f1ebfd;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --warn: #a35300;
+  --warn-soft: #fdf1e3;
+  --info: #1d4ed8;
+  --code-bg: #eceff3;
+  --f-display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+    --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2f7;
+    --code-bg: #1d242d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --fg: #e6eaef; --muted: #98a3b1; --line: #2a333e;
+  --accent: #a78bfa; --accent-soft: #221a35; --ok: #4ade80; --ok-soft: #12261a; --warn: #fbbf24; --warn-soft: #2a2010; --info: #7aa2f7;
+  --code-bg: #1d242d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5.5vw, 3rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: 1.6rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 700; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+a { color: var(--info); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); }
+header, section { display: grid; gap: 18px; }
+.logline { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); border-left: 3px solid var(--ok); padding: 6px 12px; background: var(--surface); overflow-wrap: anywhere; }
+.logline b { color: var(--ok); font-weight: 600; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; min-width: 0; }
+pre.code { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.78rem; line-height: 1.6; margin: 0; }
+pre.code .c { color: var(--muted); }
+.why { border-left: 2px solid var(--info); padding-left: 12px; max-width: 70ch; }
+.note { font-size: 0.85rem; color: var(--muted); }
+
+/* the map: one server box with an outside watcher beside it */
+.map { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); gap: 12px; }
+.box { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--surface); display: grid; gap: 10px; align-content: start; min-width: 0; }
+.box > .tag { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.outside { border-style: dashed; border-color: var(--accent); background: var(--accent-soft); }
+.row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.node { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: var(--bg); display: grid; gap: 2px; min-width: 0; }
+.node b { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.node span { font-size: 0.82rem; color: var(--muted); }
+.node.mon { border-color: var(--ok); background: var(--ok-soft); }
+.node.shared { border-color: var(--warn); background: var(--warn-soft); }
+.arrow { font-family: var(--f-mono); font-size: 0.78rem; color: var(--muted); }
+@media (max-width: 620px) { .map, .row { grid-template-columns: minmax(0, 1fr); } }
+
+.fixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.fix { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.fix p { font-size: 0.93rem; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+table.wide { min-width: 600px; }
+footer { color: var(--muted); font-size: 0.9rem; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">juju · Operations · Self-monitoring</span>
+    <h1>juju reports its own failures to a second juju</h1>
+    <p class="lede">juju tells other people when their apps break. Until now nothing told us when juju broke: a failing query only left a line in a log file nobody was reading. Now the server sends its own errors and health to a second juju instance, and an outside check covers the case where the whole machine is gone.</p>
+    <div class="logline">[self-monitoring] <b>VERIFIED LOCALLY</b> outage="main Postgres stopped: monitor stayed up and raised platform.queue_backlog at 1200 events; 1201 of 1201 customer events stored after recovery; 0 customer text on the monitor"</div>
+  </header>
+
+  <section>
+    <span class="eyebrow">The problem</span>
+    <h2>A monitor can't report its own death</h2>
+    <p>The obvious plan is to point juju's SDK at juju. It fails exactly when you need it: if the server is down, the thing that would send the alert is down too. A second instance helps with bugs and slow failures, but it runs on the same machine here to keep costs down, so it dies with the machine as well. That's why there are two layers, and each one covers what the other can't.</p>
+    <div class="map" role="img" aria-label="One server holds the main juju, the monitoring juju, and a shared Postgres and ClickHouse. The main instance sends errors and health to the monitor. An uptime service outside the server checks the main instance's readyz endpoint.">
+      <div class="box">
+        <span class="tag">Hetzner server, myjuju.dev</span>
+        <div class="row">
+          <div class="node"><b>juju.service :8080</b><span>Customers' events. Sets JUJU_MONITOR_DSN.</span></div>
+          <div class="node mon"><b>juju-monitor.service :8081</b><span>monitor.myjuju.dev. Its own user, queue and limits.</span></div>
+        </div>
+        <span class="arrow">:8080 → :8081 errors, panics, backlogs, heartbeat. Counts and failure messages, never event contents.</span>
+        <div class="node shared"><b>Postgres and ClickHouse, shared</b><span>One server each, with a separate database per instance. If Postgres stops, both instances lose their database.</span></div>
+      </div>
+      <div class="box outside">
+        <span class="tag">Outside</span>
+        <div class="node"><b>Uptime check</b><span>Sentry or similar, calling <code>/readyz</code> from elsewhere. Works when the whole server is gone.</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <table class="wide">
+        <thead><tr><th>What goes wrong</th><th>Who tells you</th><th>How</th></tr></thead>
+        <tbody>
+          <tr><td>Server off, network down, Postgres down</td><td>Outside uptime check</td><td><code>/readyz</code> stops answering 200</td></tr>
+          <tr><td>A bug: a query fails, a handler panics</td><td>Monitoring instance</td><td>A new issue, grouped by stack</td></tr>
+          <tr><td>Workers fall behind</td><td>Monitoring instance</td><td><code>platform.queue_backlog</code> issue past 1,000 events</td></tr>
+          <tr><td>ClickHouse down, which juju otherwise survives quietly</td><td>Monitoring instance</td><td><code>platform.analytics_backlog</code> issue past 10,000 events</td></tr>
+          <tr><td>The process is up but stuck</td><td>You, reading a chart</td><td>A gap in the <code>platform.heartbeat</code> trend; there's no alert on it yet</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">How it works</span>
+    <h2>Monitoring must never hurt the thing it monitors</h2>
+    <p>Every choice below follows from that rule. A monitoring feature that can slow or stop production makes production less reliable, which is the opposite of the point.</p>
+    <div class="fixes">
+      <div class="fix"><h3>Hooked into the logger</h3><p>The server already logs each failure it handles. Wrapping the log handler reports every <code>Error</code> line, including ones in code not written yet, with no reporting call to remember at each failure point.</p></div>
+      <div class="fix"><h3>Capture never waits</h3><p>Reporting happens on request paths, so it only drops an event into a buffer. A background loop does the network call. When the buffer is full, events are dropped and counted.</p></div>
+      <div class="fix"><h3>A storm has a ceiling</h3><p>One batch of 50 every 5 seconds caps sending at 10 events a second. The instances share a machine, so an error storm on one must not become load on both.</p></div>
+      <div class="fix"><h3>No loop on failure</h3><p>A failed send goes only to the local log. If it were reported as well, an unreachable monitor would make the server report on its own reporting forever.</p></div>
+      <div class="fix"><h3>A typo can't stop the server</h3><p>A bad <code>JUJU_MONITOR_DSN</code> logs an error and turns reporting off. A DSN pointing at this same server is refused for the same reason it's useless.</p></div>
+      <div class="fix"><h3>Only what's needed leaves</h3><p>Reports carry the log message, the error and the stack. Other log attributes stay behind, and panics send the route pattern, not the URL. Error text can still include details from the failure, and the monitor scrubs emails and tokens from it at ingest.</p></div>
+    </div>
+    <p class="why">Thresholds raise issues instead of drawing a line chart because juju's analytics count events; they can't add up or average a number yet. Raising an issue reuses the alerts you already configure on a project, so this needed no new alerting code.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Using it</span>
+    <h2>Turning it on</h2>
+    <p>Merging ships the code but changes nothing on its own, because <code>deploy.sh release</code> doesn't run setup and <code>JUJU_MONITOR_DSN</code> starts empty.</p>
+    <pre class="code"><span class="c"># 1. DNS: point monitor.myjuju.dev at the server, then from your laptop:</span>
+deploy/deploy.sh setup root@2.31.22.112 myjuju.dev
+
+<span class="c"># 2. On the server: make an account and a project on the monitor</span>
+juju-monitor-admin user create -email you@example.com -org platform
+juju-monitor-admin project create -org platform -name juju
+
+<span class="c"># 3. Copy the project's DSN from monitor.myjuju.dev into /etc/juju/juju.env.
+#    Only the main instance gets this line, never monitor.env.</span>
+JUJU_MONITOR_DSN=https://pk_...@monitor.myjuju.dev/1
+systemctl restart juju
+
+<span class="c"># 4. In the uptime service: check https://myjuju.dev/readyz, expect 200</span></pre>
+    <p class="note">Setup also upgrades the server's packages and restarts services, so run it at a quiet time. Check free memory and disk first: this adds a second juju process to a small server.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Verification</span>
+    <h2>What was checked</h2>
+    <p>Two real juju processes on one laptop, each with its own Postgres, sharing one ClickHouse with two databases, as production will. Then main's Postgres was stopped.</p>
+    <div class="panel">
+      <table class="wide">
+        <thead><tr><th>Check</th><th>Observed</th></tr></thead>
+        <tbody>
+          <tr><td>Healthy server sends a heartbeat, raises no issues</td><td class="mono">juju_monitor.events: platform.heartbeat, release juju@c1c64b19cd25, queue_pending 0. Issues on monitor: []</td></tr>
+          <tr><td>Heartbeats stay out of customers' data</td><td class="mono">juju.events heartbeats: 0. Customer rows in juju_monitor.events: 0</td></tr>
+          <tr><td>Main's Postgres stopped</td><td class="mono">main /readyz 503, monitor /readyz 200</td></tr>
+          <tr><td>A read that fails reaches the monitor, grouped by code location</td><td class="mono">"look up secret key: failed to connect…", culprit api.(*API).authed.func1</td></tr>
+          <tr><td>Backlog alert</td><td class="mono">1200 customer events accepted (twelve 202s); issue "platform.queue_backlog: 1200 events waiting in the queue, the limit is 1000"</td></tr>
+          <tr><td>Nothing lost across the outage</td><td class="mono">Postgres restarted: 1201 of 1201 customer events stored on main</td></tr>
+          <tr><td>Customer text stays out</td><td class="mono">"customer-private-text" in the monitor's issues: 0</td></tr>
+          <tr><td>Bad DSN</td><td class="mono">JUJU_MONITOR_DSN=not-a-dsn: main ready, log says "self-monitoring is off", key not repeated</td></tr>
+          <tr><td>Caddy accepts the new site block</td><td class="mono">caddy validate: Valid configuration (myjuju.dev, monitor.myjuju.dev, demo.myjuju.dev)</td></tr>
+          <tr><td>Automated</td><td class="mono">gofmt, go vet, go test -race with -tags=integration: all packages pass. govulncheck: code affected by 0 vulnerabilities</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>One bug turned up while testing: the stack filter skipped every function in the <code>selfmon</code> package, so the top frame in a test read <code>testing.tRunner</code> instead of the code that logged. It now skips only the reporter's own types.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Limits</span>
+    <h2>What this doesn't cover yet</h2>
+    <ul>
+      <li><strong>Not run on a real server.</strong> <code>setup.sh</code>, <code>juju-receive</code> and the systemd unit have only been syntax-checked, and the server's free memory and disk haven't been measured.</li>
+      <li><strong>The alert itself wasn't sent.</strong> The runs stop at the issue appearing on the monitor. Sending to Slack or email is the existing alert path, and hasn't been run against these issues.</li>
+      <li><strong>Worker crashes.</strong> A panic outside an HTTP request stops the process. systemd restarts it and the uptime check may catch the gap, but no report is sent.</li>
+      <li><strong>Reporting delay in a database outage.</strong> Workers retry quietly, so the first sign can be the backlog alert or the uptime check, not an instant error.</li>
+      <li><strong>Lost reports.</strong> Sends aren't retried, so a report sent while the monitor restarts is gone.</li>
+      <li><strong>ClickHouse separation.</strong> Both instances use its default user, so the two databases prevent mix-ups but wouldn't stop a compromised instance.</li>
+      <li><strong>Still to build.</strong> Per-organization and per-project usage history, on top of the super admin numbers, and JavaScript errors from the dashboard.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <a href="https://francisije.github.io/juju/">Roadmap</a> ·
+    <a href="https://francisije.github.io/juju/scale.html">Scale and hardening</a> ·
+    <a href="https://francisije.github.io/juju/analytics.html">Analytics</a>
+  </footer>
+</div>
