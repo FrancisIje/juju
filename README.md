@@ -253,3 +253,14 @@ examples/web/          example app that triggers each kind of error
 examples/react-native/ React Native app for iOS and Android release-build checks
 examples/flutter/      Flutter app for Android release and iOS simulator checks
 ```
+
+## License
+
+juju is in two parts, under two licenses:
+
+- **The SDKs (`sdks/`) and examples (`examples/`)** are [MIT](sdks/LICENSE). They go inside your
+  app, so you can ship, change and publish them without restriction.
+- **Everything else**, the server and the dashboard, is under the
+  [Functional Source License (FSL-1.1-ALv2)](LICENSE.md). You may read, run, change and self-host it
+  for your own organization, but not offer it to others as a competing commercial service. Each
+  version becomes Apache-2.0 two years after its release.
