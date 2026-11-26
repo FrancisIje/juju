@@ -1,6 +1,6 @@
 module juju
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/fergusstrange/embedded-postgres v1.34.0
