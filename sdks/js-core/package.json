@@ -1,5 +1,6 @@
 {
   "name": "@juju/core",
+  "license": "MIT",
   "version": "0.1.0",
   "description": "Platform-independent core of the juju JavaScript SDKs: events, queue, batching, retry.",
   "type": "module",

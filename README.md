@@ -82,3 +82,14 @@ the options.
 | [Roadmap](https://francisije.github.io/juju/) | what's done and what's next ([source](docs/_src/roadmap.html), run `make docs` after editing it) |
 
 Security model and how to report a vulnerability: [SECURITY.md](SECURITY.md).
+
+## License
+
+juju is in two parts, under two licenses:
+
+- **The SDKs (`sdks/`) and examples (`examples/`)** are [MIT](sdks/LICENSE). They go inside your
+  app, so you can ship, change and publish them without restriction.
+- **Everything else**, the server and the dashboard, is under the
+  [Functional Source License (FSL-1.1-ALv2)](LICENSE.md). You may read, run, change and self-host it
+  for your own organization, but not offer it to others as a competing commercial service. Each
+  version becomes Apache-2.0 two years after its release.
